@@ -54,7 +54,7 @@ CB_LIMITE      = 3
 BASE_URL       = "https://api-futures.kucoin.com"
 
 # Stop loss global diario: si el capital cae mas de 10% en el dia -> pausar
-SL_DIARIO_PCT  = 0.10
+SL_DIARIO_PCT  = 0.30  # 30% diario — compatible con SL 10% por trade
 
 # Horario: no operar entre 2am y 6am hora Chile (UTC-3 / UTC-4 segun DST)
 HORA_INICIO    = 6   # 6am Chile
@@ -629,36 +629,37 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
     if not r or r.get("error") == "insufficient_funds":
         return False
 
-    close_s = "sell" if lado == "buy" else "buy"
+    close_s  = "sell" if lado == "buy" else "buy"
+    sl_oid   = f"sl_{int(time.time()*1000)}"
 
     kc_post("/api/v1/orders", {
-        "clientOid":  f"sl_{int(time.time()*1000)}",
-        "symbol":     simbolo,
-        "side":       close_s,
-        "type":       "market",
-        "stop":       "down" if lado == "buy" else "up",
-        "stopPrice":  str(sl),
+        "clientOid":     sl_oid,
+        "symbol":        simbolo,
+        "side":          close_s,
+        "type":          "market",
+        "stop":          "down" if lado == "buy" else "up",
+        "stopPrice":     str(sl),
         "stopPriceType": "TP",
-        "size":       cantidad,
-        "leverage":   str(lev),
-        "reduceOnly": True,
-        "marginMode": "ISOLATED",
+        "size":          cantidad,
+        "leverage":      str(lev),
+        "reduceOnly":    True,
+        "marginMode":    "ISOLATED",
     })
 
     kc_post("/api/v1/orders", {
-        "clientOid":  f"tp_{int(time.time()*1000)}",
-        "symbol":     simbolo,
-        "side":       close_s,
-        "type":       "market",
-        "stop":       "up" if lado == "buy" else "down",
-        "stopPrice":  str(tp),
+        "clientOid":     f"tp_{int(time.time()*1000)}",
+        "symbol":        simbolo,
+        "side":          close_s,
+        "type":          "market",
+        "stop":          "up" if lado == "buy" else "down",
+        "stopPrice":     str(tp),
         "stopPriceType": "TP",
-        "size":       cantidad,
-        "leverage":   str(lev),
-        "reduceOnly": True,
-        "marginMode": "ISOLATED",
+        "size":          cantidad,
+        "leverage":      str(lev),
+        "reduceOnly":    True,
+        "marginMode":    "ISOLATED",
     })
-    return True
+    return sl_oid
 
 def balance_kucoin() -> float:
     d = kc_get("/api/v1/account-overview", {"currency": "USDT"})
@@ -861,8 +862,8 @@ def abrir(simbolo, t, pc, ia):
 
     cant = calcular_cantidad(pc, capital_pct)
 
-    ok = ejecutar_orden(simbolo, lado, cant, sl, tp)
-    if not ok:
+    sl_oid = ejecutar_orden(simbolo, lado, cant, sl, tp)
+    if not sl_oid:
         return
 
     with lock:
@@ -872,6 +873,8 @@ def abrir(simbolo, t, pc, ia):
             "entrada":      pc,
             "sl":           sl,
             "tp":           tp,
+            "sl_oid":       sl_oid,
+            "cantidad":     cant,
             "margen":       round(riesgo_usdt / SL_PCT, 2),
             "g_pot":        round(g_pot, 2),
             "p_pot":        round(p_pot, 2),
@@ -889,19 +892,40 @@ def _cerrar_posicion(p: dict, pc: float):
     tp_ok = (p["dir"] == "LONG" and pc >= p["tp"]) or (p["dir"] == "SHORT" and pc <= p["tp"])
     sl_ok = (p["dir"] == "LONG" and pc <= p["sl"]) or (p["dir"] == "SHORT" and pc >= p["sl"])
 
-    # Trailing stop: mover SL cuando el precio avanza 3% a favor
+    # Trailing stop: mover SL en KuCoin cuando precio avanza 15% a favor
     if not sl_ok and not tp_ok:
-        entrada = p["entrada"]
+        entrada  = p["entrada"]
+        mover    = False
+        nuevo_sl = p["sl"]
         if p["dir"] == "LONG" and pc >= entrada * 1.15:
-            nuevo_sl = round(pc * (1 - SL_PCT), 6)
-            if nuevo_sl > p["sl"]:
-                p["sl"] = nuevo_sl
-                log.info(f"{p['simbolo']} — Trailing SL movido a ${nuevo_sl:.4f}")
+            candidato = round(pc * (1 - SL_PCT), 6)
+            if candidato > p["sl"]:
+                nuevo_sl = candidato; mover = True
         elif p["dir"] == "SHORT" and pc <= entrada * 0.85:
-            nuevo_sl = round(pc * (1 + SL_PCT), 6)
-            if nuevo_sl < p["sl"]:
-                p["sl"] = nuevo_sl
-                log.info(f"{p['simbolo']} — Trailing SL movido a ${nuevo_sl:.4f}")
+            candidato = round(pc * (1 + SL_PCT), 6)
+            if candidato < p["sl"]:
+                nuevo_sl = candidato; mover = True
+        if mover:
+            close_s = "sell" if p["dir"] == "LONG" else "buy"
+            # Cancelar SL anterior en KuCoin
+            kc_post(f"/api/v1/orders/{p.get('sl_oid','')}", {}) if p.get("sl_oid") else None
+            # Colocar nuevo SL en KuCoin
+            nuevo_oid = f"sl_{int(time.time()*1000)}"
+            kc_post("/api/v1/orders", {
+                "clientOid":     nuevo_oid,
+                "symbol":        p["simbolo"],
+                "side":          close_s,
+                "type":          "market",
+                "stop":          "down" if p["dir"] == "LONG" else "up",
+                "stopPrice":     str(nuevo_sl),
+                "stopPriceType": "TP",
+                "size":          p.get("cantidad", 1),
+                "reduceOnly":    True,
+                "marginMode":    "ISOLATED",
+            })
+            p["sl"]    = nuevo_sl
+            p["sl_oid"] = nuevo_oid
+            log.info(f"{p['simbolo']} — Trailing SL actualizado en KuCoin: ${nuevo_sl:.4f}")
 
     # Cierre por cambio de tendencia: SHORT en mercado alcista o LONG en mercado bajista
     t_btc = estado.get("tendencia_btc", "lateral")
@@ -919,7 +943,15 @@ def _cerrar_posicion(p: dict, pc: float):
         if p not in estado["posiciones"]:
             return
         estado["posiciones"].remove(p)
-        pnl = p["g_pot"] if tp_ok else -p["p_pot"]
+        if tp_ok:
+            pnl = p["g_pot"]
+        else:
+            # PnL real basado en precio de cierre (funciona con trailing)
+            if p["dir"] == "LONG":
+                pnl = (pc - p["entrada"]) / p["entrada"] * p["margen"]
+            else:
+                pnl = (p["entrada"] - pc) / p["entrada"] * p["margen"]
+            pnl = round(pnl, 2)
         estado["capital"] += pnl
         resultado = "TP" if tp_ok else "SL"
         if tp_ok:
