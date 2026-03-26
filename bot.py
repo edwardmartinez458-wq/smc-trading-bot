@@ -46,8 +46,8 @@ PARES = [
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
-TP_PCT         = 0.07   # Reducido de 14% a 7% para cobrar ganancia mas rapido
-SL_PCT         = 0.02
+TP_PCT         = 0.30
+SL_PCT         = 0.10
 RIESGO_PCT     = 0.015   # 1.5% del capital por operacion
 MAX_POSICIONES = 3
 CB_LIMITE      = 3
@@ -851,16 +851,16 @@ def abrir(simbolo, t, pc, ia):
     sl     = round(pc * (1 - SL_PCT) if lado == "buy" else pc * (1 + SL_PCT), 6)
     tp     = round(pc * (1 + TP_PCT) if lado == "buy" else pc * (1 - TP_PCT), 6)
 
-    # Riesgo dinamico segun confianza IA
+    # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 55)
     if confianza >= 85:
-        riesgo_pct = 0.03
+        capital_pct = 1.0   # 100% del capital
     elif confianza >= 70:
-        riesgo_pct = 0.02
+        capital_pct = 0.75  # 75% del capital
     else:
-        riesgo_pct = 0.01
-    riesgo_usdt = estado["capital"] * riesgo_pct
-    log.info(f"{simbolo} — confianza IA {confianza}% → riesgo {riesgo_pct*100:.0f}% (${riesgo_usdt:.2f})")
+        capital_pct = 0.50  # 50% del capital
+    riesgo_usdt = estado["capital"] * capital_pct * SL_PCT
+    log.info(f"{simbolo} — confianza {confianza}% → capital {capital_pct*100:.0f}% | riesgo max ${riesgo_usdt:.2f}")
     g_pot = riesgo_usdt * (TP_PCT / SL_PCT)  # Ganancia potencial proporcional
     p_pot = riesgo_usdt
 
@@ -897,12 +897,12 @@ def _cerrar_posicion(p: dict, pc: float):
     # Trailing stop: mover SL cuando el precio avanza 3% a favor
     if not sl_ok and not tp_ok:
         entrada = p["entrada"]
-        if p["dir"] == "LONG" and pc >= entrada * 1.03:
+        if p["dir"] == "LONG" and pc >= entrada * 1.15:
             nuevo_sl = round(pc * (1 - SL_PCT), 6)
             if nuevo_sl > p["sl"]:
                 p["sl"] = nuevo_sl
                 log.info(f"{p['simbolo']} — Trailing SL movido a ${nuevo_sl:.4f}")
-        elif p["dir"] == "SHORT" and pc <= entrada * 0.97:
+        elif p["dir"] == "SHORT" and pc <= entrada * 0.85:
             nuevo_sl = round(pc * (1 + SL_PCT), 6)
             if nuevo_sl < p["sl"]:
                 p["sl"] = nuevo_sl
