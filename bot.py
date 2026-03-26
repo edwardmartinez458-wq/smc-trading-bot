@@ -46,7 +46,7 @@ PARES = [
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
-TP_PCT         = 0.30
+TP_PCT         = 0.10
 SL_PCT         = 0.10
 RIESGO_PCT     = 0.015   # 1.5% del capital por operacion
 MAX_POSICIONES = 3
@@ -788,13 +788,11 @@ def contar_toques(df: pd.DataFrame, ob: dict, t: str) -> int:
     return toques
 
 def confirma_1h(df: pd.DataFrame, t: str) -> bool:
+    # Confirmacion rapida: 2 velas de 5min consecutivas en la misma direccion
     if len(df) < 3: return False
-    u, p = df.iloc[-1], df.iloc[-2]
-    vol_ok = u["volume"] > df["volume"].tail(10).mean() * 1.1
-    if t == "alcista":
-        return u["close"] > u["open"] and u["close"] > p["open"] and u["open"] < p["close"] and vol_ok
-    if t == "bajista":
-        return u["close"] < u["open"] and u["close"] < p["open"] and u["open"] > p["close"] and vol_ok
+    c, o = df["close"].values, df["open"].values
+    if t == "alcista": return c[-1] > o[-1] and c[-2] > o[-2]
+    if t == "bajista": return c[-1] < o[-1] and c[-2] < o[-2]
     return False
 
 # ─── FILTRO IA ────────────────────────────────────────────────────────────────
@@ -914,11 +912,11 @@ def _cerrar_posicion(p: dict, pc: float):
         entrada  = p["entrada"]
         mover    = False
         nuevo_sl = p["sl"]
-        if p["dir"] == "LONG" and pc >= entrada * 1.15:
+        if p["dir"] == "LONG" and pc >= entrada * 1.10:
             candidato = round(pc * (1 - SL_PCT), 6)
             if candidato > p["sl"]:
                 nuevo_sl = candidato; mover = True
-        elif p["dir"] == "SHORT" and pc <= entrada * 0.85:
+        elif p["dir"] == "SHORT" and pc <= entrada * 0.90:
             candidato = round(pc * (1 + SL_PCT), 6)
             if candidato < p["sl"]:
                 nuevo_sl = candidato; mover = True
@@ -1038,7 +1036,7 @@ def analizar(simbolo: str):
 
     df_d  = velas(simbolo, "1440", 50)
     df_4h = velas(simbolo, "240",  100)
-    df_1h = velas(simbolo, "60",   50)
+    df_1h = velas(simbolo, "5",    10)
     if df_d.empty or df_4h.empty or df_1h.empty:
         log.info(f"{simbolo} — sin datos de velas")
         return
