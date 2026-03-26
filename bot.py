@@ -1,22 +1,30 @@
 """
 SMC Trading Bot — Smart Money Concepts
 Exchange: KuCoin Futuros
-Pares: 9 simultáneos (LONG + SHORT)
+Pares: 7 activos (alto volumen)
 Apalancamiento: x10 (configurable)
 Servidor: Railway 24/7
 + Monitor Trump Truth Social
++ Monitor Reserva Federal
+MEJORAS v2:
+- Riesgo 1-2% por operacion
+- Pares de bajo volumen removidos (ARB, OP, INJ)
+- Ciclo cada 5-15 min (aleatorio)
+- Filtro tendencia mayor BTC
+- Stop loss global 10% diario
+- Sin operar 2am-6am hora Chile
 """
 
-import os, time, logging, requests, hmac, hashlib, json, threading, base64
+import os, time, logging, requests, hmac, hashlib, json, threading, base64, random
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from logging.handlers import TimedRotatingFileHandler
 from anthropic import Anthropic
 from flask import Flask, jsonify, send_from_directory
 from dotenv import load_dotenv
 load_dotenv()
 
-# ─── CONFIG ─────────────────────────────────────────────────────────────────
+# ─── CONFIG ──────────────────────────────────────────────────────────────────
 
 KC_API_KEY     = os.getenv("KUCOIN_API_KEY")
 KC_SECRET      = os.getenv("KUCOIN_SECRET")
@@ -25,25 +33,36 @@ TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
+# Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
     "SOLUSDTM",
     "ETHUSDTM",
     "XBTUSDTM",
     "AVAXUSDTM",
     "LINKUSDTM",
-    "ARBUSDTM",
-    "OPUSDTM",
-    "INJUSDTM",
     "DOTUSDTM",
+    "XRPUSDTM",
 ]
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
 TP_PCT         = 0.14
 SL_PCT         = 0.02
-MAX_POSICIONES = 9
+RIESGO_PCT     = 0.015   # 1.5% del capital por operacion
+MAX_POSICIONES = 7
 CB_LIMITE      = 2
 BASE_URL       = "https://api-futures.kucoin.com"
+
+# Stop loss global diario: si el capital cae mas de 10% en el dia -> pausar
+SL_DIARIO_PCT  = 0.10
+
+# Horario: no operar entre 2am y 6am hora Chile (UTC-3 / UTC-4 segun DST)
+HORA_INICIO    = 6   # 6am Chile
+HORA_FIN       = 2   # 2am Chile (es decir, operar de 6am a 2am)
+
+# Ciclo aleatorio entre 5 y 15 minutos
+CICLO_MIN_SEG  = 5 * 60
+CICLO_MAX_SEG  = 15 * 60
 
 TRUMP_KEYWORDS = [
     "bitcoin", "crypto", "cryptocurrency", "digital", "dollar", "tariff",
@@ -52,7 +71,7 @@ TRUMP_KEYWORDS = [
     "blockchain", "btc", "eth", "coin", "token", "reserve", "strategic"
 ]
 
-# ─── LOGGING ────────────────────────────────────────────────────────────────
+# ─── LOGGING ─────────────────────────────────────────────────────────────────
 
 os.makedirs("logs", exist_ok=True)
 log = logging.getLogger("smc_bot")
@@ -77,18 +96,105 @@ estado = {
     "ops_ganadas":       0,
     "capital":           CAPITAL_TOTAL,
     "capital_inicial":   CAPITAL_TOTAL,
+    "capital_inicio_dia": CAPITAL_TOTAL,  # Para SL diario
     "apalancamiento":    APALANCAMIENTO,
     "pares_activos":     list(PARES),
     "ultimo_trump_id":   None,
     "ultimo_trump_texto": "",
     "trump_alerta_activa": False,
     "trump_direccion":   "",
+    "tendencia_btc":     "lateral",  # Para filtro tendencia mayor
+    "ciclo":             0,
+    "pausado":           False,
+    "sl_diario_activo":  False,
 }
 lock = threading.Lock()
 
-MARGEN_POR_PAR = CAPITAL_TOTAL / len(PARES)
+# ─── UTILIDADES HORARIO ───────────────────────────────────────────────────────
 
-# ─── TELEGRAM ───────────────────────────────────────────────────────────────
+def hora_chile() -> int:
+    """Retorna hora actual en Chile (UTC-3)"""
+    from datetime import timezone, timedelta
+    tz_chile = timezone(timedelta(hours=-3))
+    return datetime.now(tz_chile).hour
+
+def en_horario_operacion() -> bool:
+    """Retorna True si es horario valido para operar (6am a 2am Chile)"""
+    h = hora_chile()
+    # Operar de 6am a 2am = NO operar de 2am a 6am
+    if 2 <= h < 6:
+        return False
+    return True
+
+def reset_sl_diario():
+    """Resetea el capital de inicio del dia cada medianoche"""
+    while True:
+        ahora = datetime.now()
+        # Esperar hasta medianoche
+        segundos = (24 - ahora.hour) * 3600 - ahora.minute * 60 - ahora.second
+        time.sleep(segundos)
+        with lock:
+            estado["capital_inicio_dia"] = estado["capital"]
+            estado["sl_diario_activo"]   = False
+        log.info(f"SL diario reseteado — Capital inicio dia: ${estado['capital']:.2f}")
+
+def verificar_sl_diario():
+    """Pausa el bot si el capital cayo mas de 10% en el dia"""
+    with lock:
+        cap_ini_dia = estado["capital_inicio_dia"]
+        cap_actual  = estado["capital"]
+        sl_activo   = estado["sl_diario_activo"]
+
+    if sl_activo:
+        return
+
+    caida = (cap_ini_dia - cap_actual) / cap_ini_dia if cap_ini_dia > 0 else 0
+    if caida >= SL_DIARIO_PCT:
+        with lock:
+            estado["circuit_breaker"]  = True
+            estado["sl_diario_activo"] = True
+        msg = (f"STOP LOSS DIARIO ACTIVADO\n"
+               f"Capital bajo {caida*100:.1f}% hoy "
+               f"(${cap_ini_dia:.2f} -> ${cap_actual:.2f})\n"
+               f"Bot pausado hasta manana. Usa /reactivar si deseas continuar.")
+        tg(msg)
+        log.warning(f"SL diario activado — caida {caida*100:.1f}%")
+
+# ─── FILTRO TENDENCIA BTC ─────────────────────────────────────────────────────
+
+def actualizar_tendencia_btc():
+    """Actualiza la tendencia de BTC cada 30 min para filtrar operaciones"""
+    while True:
+        try:
+            df = velas("XBTUSDTM", "240", 50)
+            if not df.empty:
+                t = tendencia(df)
+                with lock:
+                    estado["tendencia_btc"] = t
+                log.info(f"Tendencia BTC actualizada: {t}")
+        except Exception as e:
+            log.error(f"Tendencia BTC: {e}")
+        time.sleep(30 * 60)
+
+def filtro_tendencia_btc(dir_operacion: str) -> bool:
+    """
+    Retorna True si la operacion va en la misma direccion que BTC.
+    Si BTC esta lateral, permite ambas direcciones.
+    """
+    with lock:
+        t_btc = estado["tendencia_btc"]
+
+    if t_btc == "lateral":
+        return True  # Mercado lateral: permite ambas direcciones
+    if t_btc == "alcista" and dir_operacion == "alcista":
+        return True
+    if t_btc == "bajista" and dir_operacion == "bajista":
+        return True
+
+    log.info(f"Filtro BTC: tendencia {t_btc} — operacion {dir_operacion} bloqueada")
+    return False
+
+# ─── TELEGRAM ────────────────────────────────────────────────────────────────
 
 def tg(msg: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -133,7 +239,8 @@ def manejar_comando(texto: str):
         with lock:
             estado["circuit_breaker"]   = False
             estado["perdidas_seguidas"] = 0
-        tg("Bot reactivado. Circuit breaker reseteado.")
+            estado["sl_diario_activo"]  = False
+        tg("Bot reactivado. Circuit breaker y SL diario reseteados.")
         log.info("Bot reactivado por Telegram")
 
     elif texto == "/estado":
@@ -147,26 +254,37 @@ def manejar_comando(texto: str):
 
     elif texto == "/capital":
         with lock:
-            cap   = estado["capital"]
-            ops_t = estado["ops_total"]
-            ops_g = estado["ops_ganadas"]
-            lev   = estado["apalancamiento"]
+            cap    = estado["capital"]
+            cap_d  = estado["capital_inicio_dia"]
+            ops_t  = estado["ops_total"]
+            ops_g  = estado["ops_ganadas"]
+            lev    = estado["apalancamiento"]
         wr = ops_g / ops_t * 100 if ops_t else 0
+        caida_dia = (cap_d - cap) / cap_d * 100 if cap_d > 0 else 0
         tg(f"Capital actual: ${cap:.2f} USDT\n"
+           f"Inicio del dia: ${cap_d:.2f}\n"
+           f"Variacion hoy: {'-' if caida_dia > 0 else '+'}{abs(caida_dia):.1f}%\n"
            f"Win Rate: {wr:.0f}% ({ops_g}/{ops_t})\n"
            f"Apalancamiento: x{lev}")
 
     elif texto == "/trump":
         with lock:
-            txt = estado["ultimo_trump_texto"]
-            dir_ = estado["trump_direccion"]
+            txt   = estado["ultimo_trump_texto"]
+            dir_  = estado["trump_direccion"]
             activa = estado["trump_alerta_activa"]
         if txt:
             tg(f"Ultimo post Trump:\n\n{txt}\n\nImpacto: {dir_}\nAlerta activa: {'SI' if activa else 'NO'}")
         else:
             tg("No hay posts recientes de Trump detectados.")
 
-# ─── TRUMP TRUTH SOCIAL MONITOR ─────────────────────────────────────────────
+    elif texto == "/horario":
+        h = hora_chile()
+        operando = en_horario_operacion()
+        tg(f"Hora Chile: {h}:00\n"
+           f"Horario de operacion: 6am - 2am\n"
+           f"Estado: {'OPERANDO' if operando else 'PAUSADO (hora de descanso)'}")
+
+# ─── TRUMP MONITOR ────────────────────────────────────────────────────────────
 
 def obtener_posts_trump() -> list:
     urls = [
@@ -251,6 +369,7 @@ RAZON: una linea breve explicando el impacto"""}]
         log.error(f"IA Trump: {e}")
         return {"impacto": "NEUTRAL", "confianza": 0, "urgencia": "BAJA", "razon": "Error IA"}
 
+# ─── FED MONITOR ──────────────────────────────────────────────────────────────
 
 FED_KEYWORDS = [
     "federal reserve", "jerome powell", "fomc", "interest rate",
@@ -259,7 +378,7 @@ FED_KEYWORDS = [
 ]
 
 def obtener_noticias_fed() -> list:
-    import requests, re as _re
+    import re as _re
     urls = [
         "https://news.google.com/rss/search?q=federal+reserve+interest+rate&hl=en-US&gl=US&ceid=US:en",
         "https://news.google.com/rss/search?q=jerome+powell+fed+rates&hl=en-US&gl=US&ceid=US:en",
@@ -271,9 +390,9 @@ def obtener_noticias_fed() -> list:
                 continue
             posts = []
             for item in r.text.split("<item>")[1:6]:
-                guid = item.split("<guid>")[1].split("</guid>")[0].strip() if "<guid>" in item else ""
+                guid   = item.split("<guid>")[1].split("</guid>")[0].strip() if "<guid>" in item else ""
                 titulo = _re.sub(r"<[^>]+>", "", item.split("<title>")[1].split("</title>")[0]).strip() if "<title>" in item else ""
-                fecha = item.split("<pubDate>")[1].split("</pubDate>")[0].strip() if "<pubDate>" in item else ""
+                fecha  = item.split("<pubDate>")[1].split("</pubDate>")[0].strip() if "<pubDate>" in item else ""
                 if guid and titulo:
                     posts.append({"id": guid, "texto": titulo, "fecha": fecha})
             if posts:
@@ -283,7 +402,6 @@ def obtener_noticias_fed() -> list:
     return []
 
 def monitor_fed():
-    import time
     time.sleep(45)
     ultimo_id = ""
     while True:
@@ -345,10 +463,10 @@ def monitor_trump():
             analisis = analizar_trump_ia(texto)
 
             with lock:
-                estado["trump_direccion"]    = analisis["impacto"]
+                estado["trump_direccion"]     = analisis["impacto"]
                 estado["trump_alerta_activa"] = analisis["urgencia"] == "ALTA" and analisis["confianza"] >= 60
 
-            emoji = "📈" if analisis["impacto"] == "ALCISTA" else "📉" if analisis["impacto"] == "BAJISTA" else "➡️"
+            emoji = "📈" if analisis["impacto"] == "ALCISTA" else "📉" if analisis["impacto"] == "BAJISTA" else "⚡"
             urgencia_emoji = "🚨" if analisis["urgencia"] == "ALTA" else "⚠️" if analisis["urgencia"] == "MEDIA" else "ℹ️"
 
             msg = (
@@ -368,7 +486,7 @@ def monitor_trump():
 
         time.sleep(10 * 60)
 
-# ─── KUCOIN FUTURES API ──────────────────────────────────────────────────────
+# ─── KUCOIN FUTURES API ───────────────────────────────────────────────────────
 
 def kc_sign(timestamp: str, method: str, endpoint: str, body: str = "") -> tuple:
     msg = timestamp + method + endpoint + body
@@ -474,6 +592,22 @@ def precio(simbolo: str) -> float:
     except:
         return 0.0
 
+def calcular_cantidad(pc: float) -> int:
+    """
+    Calcula la cantidad de contratos basado en riesgo del 1.5% del capital.
+    Riesgo = capital * RIESGO_PCT
+    Con SL de SL_PCT y apalancamiento, la cantidad de contratos se ajusta.
+    """
+    with lock:
+        cap = estado["capital"]
+        lev = estado["apalancamiento"]
+
+    riesgo_usdt = cap * RIESGO_PCT        # Maximo a perder en USDT
+    margen       = riesgo_usdt / SL_PCT   # Margen necesario dado el SL
+    cant = max(1, int((margen * lev) / pc))
+    log.info(f"Riesgo: ${riesgo_usdt:.2f} USDT | Contratos: {cant}")
+    return cant
+
 def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float) -> bool:
     lev = estado["apalancamiento"]
 
@@ -527,15 +661,11 @@ def balance_kucoin() -> float:
     except:
         return 0.0
 
-# ─── GESTIÓN CAPITAL ─────────────────────────────────────────────────────────
+# ─── GESTION CAPITAL ──────────────────────────────────────────────────────────
 
 def recalcular_capital():
-    global MARGEN_POR_PAR
-    n = max(len(estado["pares_activos"]), 1)
-    MARGEN_POR_PAR = estado["capital"] / n
-
     cap_ini = estado["capital_inicial"]
-    caida   = (cap_ini - estado["capital"]) / cap_ini
+    caida   = (cap_ini - estado["capital"]) / cap_ini if cap_ini > 0 else 0
 
     if caida >= 0.40:
         estado["circuit_breaker"] = True
@@ -545,7 +675,10 @@ def recalcular_capital():
         estado["apalancamiento"] = 10
         log.warning("Apalancamiento reducido a x10 por caida de capital")
 
-# ─── HISTORIAL ───────────────────────────────────────────────────────────────
+    # Verificar SL diario
+    verificar_sl_diario()
+
+# ─── HISTORIAL ────────────────────────────────────────────────────────────────
 
 def guardar_historial(simbolo, dir_, entrada, salida, pnl, resultado, confianza_ia):
     try:
@@ -570,7 +703,7 @@ def guardar_historial(simbolo, dir_, entrada, salida, pnl, resultado, confianza_
     except Exception as e:
         log.error(f"Historial: {e}")
 
-# ─── SMC ─────────────────────────────────────────────────────────────────────
+# ─── SMC ──────────────────────────────────────────────────────────────────────
 
 def tendencia(df: pd.DataFrame) -> str:
     if len(df) < 20: return "lateral"
@@ -630,13 +763,14 @@ def confirma_1h(df: pd.DataFrame, t: str) -> bool:
         return u["close"] < u["open"] and u["close"] < p["open"] and u["open"] > p["close"] and vol_ok
     return False
 
-# ─── FILTRO IA ───────────────────────────────────────────────────────────────
+# ─── FILTRO IA ────────────────────────────────────────────────────────────────
 
 def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
     with lock:
         trump_activa   = estado["trump_alerta_activa"]
         trump_dir      = estado["trump_direccion"]
         trump_texto    = estado["ultimo_trump_texto"]
+        t_btc          = estado["tendencia_btc"]
 
     trump_contexto = ""
     if trump_activa and trump_texto:
@@ -651,15 +785,16 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
 
 SENAL:
 Par: {simbolo} | Fecha: {datetime.now().strftime('%Y-%m-%d %A')} | Mes: {datetime.now().month}
-Tendencia Daily: {t} | Precio: ${pc:.4f}
+Tendencia Daily: {t} | Tendencia BTC: {t_btc} | Precio: ${pc:.4f}
 Order Block: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}
 Toques trendline: {toques} | Direccion: {'LONG' if t == 'alcista' else 'SHORT'}
+Hora Chile: {hora_chile()}h
 {trump_contexto}
 
 ANALIZA:
 1. Mes {datetime.now().month} historicamente favorable en crypto?
 2. Ciclo post-halving abril 2024 apoya esta direccion?
-3. El setup repite patrones de 2021, 2023, 2024?
+3. La tendencia BTC apoya la entrada?
 4. Hay riesgos macro relevantes esta semana?
 5. La alerta Trump (si existe) apoya o contradice la entrada?
 6. Hay razones claras para NO entrar?
@@ -686,7 +821,7 @@ RAZON: una linea breve"""}]
     log.warning(f"{simbolo} IA no disponible — fallback tecnico 5/5")
     return {"entrar": True, "confianza": 100, "razon": "Fallback tecnico 5/5 (IA no disponible)"}
 
-# ─── POSICIONES ──────────────────────────────────────────────────────────────
+# ─── POSICIONES ───────────────────────────────────────────────────────────────
 
 def abrir(simbolo, t, pc, ia):
     lev    = estado["apalancamiento"]
@@ -694,10 +829,13 @@ def abrir(simbolo, t, pc, ia):
     dir_   = "LONG" if lado == "buy" else "SHORT"
     sl     = round(pc * (1 - SL_PCT) if lado == "buy" else pc * (1 + SL_PCT), 6)
     tp     = round(pc * (1 + TP_PCT) if lado == "buy" else pc * (1 - TP_PCT), 6)
-    m      = MARGEN_POR_PAR
-    g_pot  = m * lev * TP_PCT
-    p_pot  = m * lev * SL_PCT
-    cant   = max(1, int((m * lev) / pc))
+
+    # Riesgo fijo: 1.5% del capital
+    riesgo_usdt = estado["capital"] * RIESGO_PCT
+    g_pot = riesgo_usdt * (TP_PCT / SL_PCT)  # Ganancia potencial proporcional
+    p_pot = riesgo_usdt
+
+    cant = calcular_cantidad(pc)
 
     ok = ejecutar_orden(simbolo, lado, cant, sl, tp)
     if not ok:
@@ -705,15 +843,23 @@ def abrir(simbolo, t, pc, ia):
 
     with lock:
         estado["posiciones"].append({
-            "simbolo": simbolo, "dir": dir_, "entrada": pc,
-            "sl": sl, "tp": tp, "margen": m,
-            "g_pot": g_pot, "p_pot": p_pot,
+            "simbolo":      simbolo,
+            "dir":          dir_,
+            "entrada":      pc,
+            "sl":           sl,
+            "tp":           tp,
+            "margen":       round(riesgo_usdt / SL_PCT, 2),
+            "g_pot":        round(g_pot, 2),
+            "p_pot":        round(p_pot, 2),
             "confianza_ia": ia["confianza"],
-            "ts": datetime.now().isoformat(),
+            "ts":           datetime.now().isoformat(),
         })
         estado["ops_total"] += 1
 
-    tg(f"ENTRADA {simbolo} {dir_} @ ${pc:.4f} | IA {ia['confianza']}%")
+    tg(f"ENTRADA {simbolo} {dir_} @ ${pc:.4f}\n"
+       f"IA {ia['confianza']}% | Riesgo: ${p_pot:.2f} USDT\n"
+       f"SL: ${sl:.4f} | TP: ${tp:.4f}\n"
+       f"Razon: {ia['razon']}")
 
 def _cerrar_posicion(p: dict, pc: float):
     tp_ok = (p["dir"] == "LONG" and pc >= p["tp"]) or (p["dir"] == "SHORT" and pc <= p["tp"])
@@ -743,7 +889,8 @@ def _cerrar_posicion(p: dict, pc: float):
 
     wr = ops_g / ops_t * 100 if ops_t else 0
     signo = "+" if pnl > 0 else ""
-    tg(f"{'✅' if tp_ok else '❌'} {p['simbolo']} {resultado} {signo}{pnl:.2f} USDT | Capital: ${cap:.2f}")
+    tg(f"{'✅' if tp_ok else '🔴'} {p['simbolo']} {resultado} {signo}${pnl:.2f} USDT\n"
+       f"Capital: ${cap:.2f} | WR: {wr:.0f}%")
 
     recalcular_capital()
 
@@ -766,13 +913,18 @@ def monitor_posiciones():
             log.error(f"Monitor posiciones: {e}")
         time.sleep(5 * 60)
 
-# ─── ANÁLISIS PAR ────────────────────────────────────────────────────────────
+# ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
 def analizar(simbolo: str):
     with lock:
         if estado["circuit_breaker"]: return
         if len(estado["posiciones"]) >= MAX_POSICIONES: return
         if any(p["simbolo"] == simbolo for p in estado["posiciones"]): return
+
+    # Filtro horario: no operar de 2am a 6am Chile
+    if not en_horario_operacion():
+        log.info(f"{simbolo} — fuera de horario ({hora_chile()}h Chile) — esperando 6am")
+        return
 
     df_d  = velas(simbolo, "1440", 50)
     df_4h = velas(simbolo, "240",  100)
@@ -786,6 +938,11 @@ def analizar(simbolo: str):
     t = tendencia(df_d)
     if t == "lateral": return
     if not hay_bos(df_4h, t): return
+
+    # Filtro tendencia BTC: solo operar en la misma direccion que BTC
+    if not filtro_tendencia_btc(t):
+        log.info(f"{simbolo} — bloqueado por filtro BTC (bot va {t}, BTC va {estado['tendencia_btc']})")
+        return
 
     ob = buscar_ob(df_4h, t)
     if not ob["valido"] or not en_ob(pc, ob): return
@@ -804,38 +961,47 @@ def analizar(simbolo: str):
     log.info(f"{simbolo} IA aprueba {ia['confianza']}% — ejecutando")
     abrir(simbolo, t, pc, ia)
 
-# ─── REPORTE ─────────────────────────────────────────────────────────────────
+# ─── REPORTE ──────────────────────────────────────────────────────────────────
 
 def _enviar_reporte():
     with lock:
-        cap     = estado["capital"]
-        cap_ini = estado["capital_inicial"]
-        ops_t   = estado["ops_total"]
-        ops_g   = estado["ops_ganadas"]
-        lev     = estado["apalancamiento"]
-        cb      = estado["circuit_breaker"]
-        pos     = list(estado["posiciones"])
-        trump_t = estado["ultimo_trump_texto"]
-        trump_d = estado["trump_direccion"]
+        cap       = estado["capital"]
+        cap_ini   = estado["capital_inicial"]
+        cap_dia   = estado["capital_inicio_dia"]
+        ops_t     = estado["ops_total"]
+        ops_g     = estado["ops_ganadas"]
+        lev       = estado["apalancamiento"]
+        cb        = estado["circuit_breaker"]
+        pos       = list(estado["posiciones"])
+        trump_t   = estado["ultimo_trump_texto"]
+        trump_d   = estado["trump_direccion"]
+        t_btc     = estado["tendencia_btc"]
 
-    wr  = ops_g / ops_t * 100 if ops_t else 0
-    g   = cap - cap_ini
-    pct = g / cap_ini * 100
-    pos_txt = "\n".join(
+    wr       = ops_g / ops_t * 100 if ops_t else 0
+    g        = cap - cap_ini
+    pct      = g / cap_ini * 100 if cap_ini else 0
+    g_dia    = cap - cap_dia
+    pct_dia  = g_dia / cap_dia * 100 if cap_dia else 0
+    pos_txt  = "\n".join(
         f"  {p['simbolo']} {p['dir']} @ ${p['entrada']:.4f}" for p in pos
     ) or "  Ninguna"
-    trump_txt = f"\nTrump ultimo: {trump_d} — {trump_t[:80]}..." if trump_t else ""
+    trump_txt = f"\nTrump: {trump_d} — {trump_t[:80]}..." if trump_t else ""
+
+    horario_ok = en_horario_operacion()
+
     tg(f"REPORTE {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
        f"Capital inicial: ${cap_ini:.2f}\n"
        f"Capital actual:  ${cap:.2f}\n"
-       f"Ganancia: {'+' if g >= 0 else ''}{g:.2f} ({'+' if pct >= 0 else ''}{pct:.1f}%)\n"
+       f"Hoy: {'+' if g_dia >= 0 else ''}{g_dia:.2f} ({'+' if pct_dia >= 0 else ''}{pct_dia:.1f}%)\n"
+       f"Total: {'+' if g >= 0 else ''}{g:.2f} ({'+' if pct >= 0 else ''}{pct:.1f}%)\n"
        f"Win Rate: {wr:.0f}% ({ops_g}/{ops_t} ops)\n"
-       f"x{lev} | CB: {'ACTIVO' if cb else 'Normal'}\n\n"
+       f"x{lev} | CB: {'ACTIVO' if cb else 'Normal'}\n"
+       f"BTC: {t_btc.upper()} | Horario: {'OK' if horario_ok else 'DESCANSO'}\n\n"
        f"Posiciones abiertas:\n{pos_txt}"
        f"{trump_txt}\n\n"
        f"Exchange: KuCoin Futuros")
 
-# ─── VERIFICACIÓN INICIAL ────────────────────────────────────────────────────
+# ─── VERIFICACION INICIAL ─────────────────────────────────────────────────────
 
 def verificar_inicio():
     errores = []
@@ -846,8 +1012,9 @@ def verificar_inicio():
         errores.append("KuCoin API: balance=0 (verifica KUCOIN_API_KEY, SECRET y PASSPHRASE)")
     else:
         log.info(f"KuCoin OK — Balance USDT: ${b:.2f}")
-        estado["capital"]         = b
-        estado["capital_inicial"] = b
+        estado["capital"]           = b
+        estado["capital_inicial"]   = b
+        estado["capital_inicio_dia"] = b
 
     log.info("Verificando Anthropic API...")
     try:
@@ -885,8 +1052,6 @@ def verificar_inicio():
             log.warning(f"  {s} no disponible — removido")
 
     estado["pares_activos"] = pares_ok
-    global MARGEN_POR_PAR
-    MARGEN_POR_PAR = estado["capital"] / max(len(pares_ok), 1)
 
     if errores:
         msg = "ERROR AL INICIAR — Bot detenido\n\n" + "\n".join(errores)
@@ -894,15 +1059,17 @@ def verificar_inicio():
         log.critical(f"Errores de inicio: {errores}")
         raise SystemExit(1)
 
-    tg(f"SMC BOT KUCOIN INICIADO\n\n"
+    tg(f"SMC BOT v2 INICIADO\n\n"
        f"Pares: {len(pares_ok)} | Capital: ${estado['capital']:.2f} USDT\n"
        f"x{estado['apalancamiento']} | TP: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}%\n"
-       f"Senales: cada 30min | Monitor SL/TP: cada 5min\n"
-       f"Monitor Trump: cada 10min\n"
-       f"Comandos: /estado /pausar /reactivar /capital /trump\n\n"
+       f"Riesgo por op: {RIESGO_PCT*100:.1f}% del capital\n"
+       f"SL diario: {SL_DIARIO_PCT*100:.0f}%\n"
+       f"Ciclo: 5-15 min aleatorio\n"
+       f"Horario: 6am-2am hora Chile\n"
+       f"Filtro BTC: ACTIVO\n\n"
        f"{', '.join(pares_ok)}\n\nActivo 24/7 en Railway")
 
-# ─── DASHBOARD API ───────────────────────────────────────────────────────────
+# ─── DASHBOARD API ────────────────────────────────────────────────────────────
 
 app = Flask(__name__, static_folder=".")
 
@@ -918,39 +1085,52 @@ def api_estado():
             estado["capital"] = bal_real
 
     with lock:
-        pos     = list(estado["posiciones"])
-        cap     = estado["capital"]
-        cap_ini = estado["capital_inicial"]
-        ops_t   = estado["ops_total"]
-        ops_g   = estado["ops_ganadas"]
-        lev     = estado["apalancamiento"]
-        cb      = estado["circuit_breaker"]
-        perdidas= estado["perdidas_seguidas"]
-        pares   = list(estado["pares_activos"])
-        trump_t = estado["ultimo_trump_texto"]
-        trump_d = estado["trump_direccion"]
-        trump_a = estado["trump_alerta_activa"]
+        pos      = list(estado["posiciones"])
+        cap      = estado["capital"]
+        cap_ini  = estado["capital_inicial"]
+        cap_dia  = estado["capital_inicio_dia"]
+        ops_t    = estado["ops_total"]
+        ops_g    = estado["ops_ganadas"]
+        lev      = estado["apalancamiento"]
+        cb       = estado["circuit_breaker"]
+        perdidas = estado["perdidas_seguidas"]
+        pares    = list(estado["pares_activos"])
+        trump_t  = estado["ultimo_trump_texto"]
+        trump_d  = estado["trump_direccion"]
+        trump_a  = estado["trump_alerta_activa"]
+        t_btc    = estado["tendencia_btc"]
+        ciclo    = estado["ciclo"]
 
-    wr  = round(ops_g / ops_t * 100, 1) if ops_t else 0
-    g   = round(cap - cap_ini, 2)
-    pct = round(g / cap_ini * 100, 2) if cap_ini else 0
+    wr      = round(ops_g / ops_t * 100, 1) if ops_t else 0
+    g       = round(cap - cap_ini, 2)
+    pct     = round(g / cap_ini * 100, 2) if cap_ini else 0
+    g_dia   = round(cap - cap_dia, 2)
+    pct_dia = round(g_dia / cap_dia * 100, 2) if cap_dia else 0
 
     return jsonify({
         "capital":           round(cap, 2),
         "capital_inicial":   cap_ini,
+        "capital_inicio_dia": cap_dia,
         "ganancia":          g,
         "ganancia_pct":      pct,
+        "ganancia_dia":      g_dia,
+        "ganancia_dia_pct":  pct_dia,
         "win_rate":          wr,
         "ops_total":         ops_t,
         "ops_ganadas":       ops_g,
         "apalancamiento":    lev,
         "circuit_breaker":   cb,
+        "pausado":           cb,
         "perdidas_seguidas": perdidas,
         "pares_activos":     pares,
         "posiciones":        pos,
         "trump_texto":       trump_t[:150] if trump_t else "",
         "trump_direccion":   trump_d,
         "trump_alerta":      trump_a,
+        "tendencia_btc":     t_btc,
+        "horario_ok":        en_horario_operacion(),
+        "hora_chile":        hora_chile(),
+        "ciclo":             ciclo,
         "timestamp":         datetime.now().isoformat(),
     })
 
@@ -960,16 +1140,17 @@ def api_pausar():
         estado["circuit_breaker"] = True
     log.info("Bot pausado desde dashboard")
     tg("Bot pausado desde el dashboard.")
-    return jsonify({"ok": True, "estado": "pausado"})
+    return jsonify({"ok": True, "estado": "pausado", "mensaje": "Bot pausado correctamente"})
 
 @app.route("/api/reactivar", methods=["POST"])
 def api_reactivar():
     with lock:
         estado["circuit_breaker"]   = False
         estado["perdidas_seguidas"] = 0
+        estado["sl_diario_activo"]  = False
     log.info("Bot reactivado desde dashboard")
     tg("Bot reactivado desde el dashboard.")
-    return jsonify({"ok": True, "estado": "activo"})
+    return jsonify({"ok": True, "estado": "activo", "mensaje": "Bot reactivado correctamente"})
 
 @app.route("/api/historial")
 def api_historial():
@@ -1008,43 +1189,53 @@ def iniciar_servidor():
     _log.getLogger("werkzeug").setLevel(_log.ERROR)
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
-# ─── MAIN ────────────────────────────────────────────────────────────────────
+# ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
-    log.info("SMC Bot KuCoin iniciando...")
+    log.info("SMC Bot KuCoin v2 iniciando...")
 
     verificar_inicio()
 
-    threading.Thread(target=telegram_polling,   daemon=True, name="TelegramPoller").start()
-    threading.Thread(target=monitor_posiciones, daemon=True, name="PosMonitor").start()
-    threading.Thread(target=iniciar_servidor,   daemon=True, name="Dashboard").start()
-    threading.Thread(target=monitor_trump,      daemon=True, name="TrumpMonitor").start()
-    threading.Thread(target=monitor_fed,         daemon=True, name="FedMonitor").start()
-    log.info("Hilos iniciados: TelegramPoller, PosMonitor, Dashboard, TrumpMonitor, FedMonitor")
+    threading.Thread(target=telegram_polling,      daemon=True, name="TelegramPoller").start()
+    threading.Thread(target=monitor_posiciones,    daemon=True, name="PosMonitor").start()
+    threading.Thread(target=iniciar_servidor,      daemon=True, name="Dashboard").start()
+    threading.Thread(target=monitor_trump,         daemon=True, name="TrumpMonitor").start()
+    threading.Thread(target=monitor_fed,           daemon=True, name="FedMonitor").start()
+    threading.Thread(target=actualizar_tendencia_btc, daemon=True, name="BTCTrend").start()
+    threading.Thread(target=reset_sl_diario,       daemon=True, name="SLDiario").start()
+    log.info("Hilos iniciados: TelegramPoller, PosMonitor, Dashboard, TrumpMonitor, FedMonitor, BTCTrend, SLDiario")
 
     ultimo_reporte = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    ciclo = 0
 
     while True:
-        ciclo += 1
-        log.info(f"CICLO {ciclo} | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        with lock:
+            estado["ciclo"] += 1
+            ciclo = estado["ciclo"]
+
+        log.info(f"CICLO {ciclo} | {datetime.now().strftime('%Y-%m-%d %H:%M')} | Chile: {hora_chile()}h")
 
         recalcular_capital()
 
-        for s in estado["pares_activos"]:
-            try:
-                analizar(s)
-                time.sleep(3)
-            except Exception as e:
-                log.error(f"Error analizando {s}: {e}")
+        # Verificar horario antes de analizar
+        if not en_horario_operacion():
+            log.info(f"Fuera de horario ({hora_chile()}h Chile) — esperando 6am, sin operar")
+        else:
+            for s in estado["pares_activos"]:
+                try:
+                    analizar(s)
+                    time.sleep(3)
+                except Exception as e:
+                    log.error(f"Error analizando {s}: {e}")
 
         ahora = datetime.now()
         if ahora.hour == 6 and (ahora - ultimo_reporte).total_seconds() > 3600:
             _enviar_reporte()
             ultimo_reporte = ahora
 
-        log.info(f"CICLO {ciclo} completado — proximo en 30 min | {datetime.now().strftime('%H:%M')}")
-        time.sleep(30 * 60)
+        # Ciclo aleatorio entre 5 y 15 minutos
+        espera = random.randint(CICLO_MIN_SEG, CICLO_MAX_SEG)
+        log.info(f"CICLO {ciclo} completado — proximo en {espera//60} min | {datetime.now().strftime('%H:%M')}")
+        time.sleep(espera)
 
 if __name__ == "__main__":
     main()
