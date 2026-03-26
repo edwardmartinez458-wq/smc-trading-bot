@@ -914,52 +914,128 @@ def monitor_posiciones():
         time.sleep(5 * 60)
 
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
+notepad C:\trading-bot\bot.py
+```
 
+Presiona **Ctrl+H** (buscar y reemplazar), y:
+
+- En **"Buscar"** pega esto exactamente:
+```
 def analizar(simbolo: str):
     with lock:
         if estado["circuit_breaker"]: return
         if len(estado["posiciones"]) >= MAX_POSICIONES: return
         if any(p["simbolo"] == simbolo for p in estado["posiciones"]): return
-
     # Filtro horario: no operar de 2am a 6am Chile
     if not en_horario_operacion():
         log.info(f"{simbolo} — fuera de horario ({hora_chile()}h Chile) — esperando 6am")
+        return
+    df_d  = velas(simbolo, "1440", 50)
+    df_4h = velas(simbolo, "240",  100)
+    df_1h = velas(simbolo, "60",   50)
+    if df_d.empty or df_4h.empty or df_1h.empty:
+        return
+    pc = precio(simbolo)
+    if not pc: return
+    t = tendencia(df_d)
+    if t == "lateral": return
+    if not hay_bos(df_4h, t): return
+    # Filtro tendencia BTC: solo operar en la misma direccion que BTC
+    if not filtro_tendencia_btc(t):
+        log.info(f"{simbolo} — bloqueado por filtro BTC (bot va {t}, BTC va {estado['tendencia_btc']})")
+        return
+    ob = buscar_ob(df_4h, t)
+    if not ob["valido"] or not en_ob(pc, ob): return
+    tk = contar_toques(df_4h, ob, t)
+    if tk < 3: return
+    if not confirma_1h(df_1h, t): return
+    log.info(f"{simbolo} 5/5 — consultando IA...")
+    ia = filtro_ia(simbolo, t, pc, ob, tk)
+    if not ia["entrar"]:
+        log.info(f"{simbolo} IA rechaza ({ia['confianza']}%): {ia['razon']}")
+        return
+    log.info(f"{simbolo} IA aprueba {ia['confianza']}% — ejecutando")
+    abrir(simbolo, t, pc, ia)
+```
+
+- En **"Reemplazar con"** pega esto:
+```
+def analizar(simbolo: str):
+    with lock:
+        if estado["circuit_breaker"]:
+            log.info(f"{simbolo} — bloqueado: circuit breaker activo")
+            return
+        if len(estado["posiciones"]) >= MAX_POSICIONES:
+            log.info(f"{simbolo} — bloqueado: max posiciones")
+            return
+        if any(p["simbolo"] == simbolo for p in estado["posiciones"]):
+            log.info(f"{simbolo} — bloqueado: ya tiene posicion abierta")
+            return
+
+    if not en_horario_operacion():
+        log.info(f"{simbolo} — fuera de horario ({hora_chile()}h Chile)")
         return
 
     df_d  = velas(simbolo, "1440", 50)
     df_4h = velas(simbolo, "240",  100)
     df_1h = velas(simbolo, "60",   50)
     if df_d.empty or df_4h.empty or df_1h.empty:
+        log.info(f"{simbolo} — sin datos de velas")
         return
 
     pc = precio(simbolo)
-    if not pc: return
-
-    t = tendencia(df_d)
-    if t == "lateral": return
-    if not hay_bos(df_4h, t): return
-
-    # Filtro tendencia BTC: solo operar en la misma direccion que BTC
-    if not filtro_tendencia_btc(t):
-        log.info(f"{simbolo} — bloqueado por filtro BTC (bot va {t}, BTC va {estado['tendencia_btc']})")
+    if not pc:
+        log.info(f"{simbolo} — sin precio")
         return
 
+    t = tendencia(df_d)
+    log.info(f"{simbolo} — tendencia Daily: {t} | precio: ${pc:.4f}")
+    if t == "lateral":
+        log.info(f"{simbolo} — RECHAZADO: tendencia lateral")
+        return
+
+    if not hay_bos(df_4h, t):
+        log.info(f"{simbolo} — RECHAZADO: sin BOS en 4H")
+        return
+    log.info(f"{simbolo} — BOS OK")
+
+    if not filtro_tendencia_btc(t):
+        log.info(f"{simbolo} — RECHAZADO: filtro BTC (par={t}, BTC={estado['tendencia_btc']})")
+        return
+    log.info(f"{simbolo} — filtro BTC OK")
+
     ob = buscar_ob(df_4h, t)
-    if not ob["valido"] or not en_ob(pc, ob): return
+    if not ob["valido"]:
+        log.info(f"{simbolo} — RECHAZADO: sin Order Block valido")
+        return
+    log.info(f"{simbolo} — OB encontrado: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}")
+
+    if not en_ob(pc, ob):
+        log.info(f"{simbolo} — RECHAZADO: precio fuera del OB")
+        return
+    log.info(f"{simbolo} — precio EN el OB OK")
 
     tk = contar_toques(df_4h, ob, t)
-    if tk < 3: return
-    if not confirma_1h(df_1h, t): return
+    log.info(f"{simbolo} — toques en OB: {tk}/3")
+    if tk < 3:
+        log.info(f"{simbolo} — RECHAZADO: solo {tk} toques (necesita 3)")
+        return
 
-    log.info(f"{simbolo} 5/5 — consultando IA...")
+    if not confirma_1h(df_1h, t):
+        log.info(f"{simbolo} — RECHAZADO: sin confirmacion 1H")
+        return
+    log.info(f"{simbolo} — confirmacion 1H OK")
+
+    log.info(f"{simbolo} — 5/5 FILTROS PASADOS — consultando IA...")
     ia = filtro_ia(simbolo, t, pc, ob, tk)
 
     if not ia["entrar"]:
-        log.info(f"{simbolo} IA rechaza ({ia['confianza']}%): {ia['razon']}")
+        log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
         return
 
-    log.info(f"{simbolo} IA aprueba {ia['confianza']}% — ejecutando")
+    log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
     abrir(simbolo, t, pc, ia)
+
 
 # ─── REPORTE ──────────────────────────────────────────────────────────────────
 
