@@ -760,9 +760,15 @@ def buscar_ob(df: pd.DataFrame, t: str) -> dict:
             return {"zona_alta": v["close"], "zona_baja": v["open"], "valido": True}
     return empty
 
-def en_ob(pc: float, ob: dict) -> bool:
+def en_ob(pc: float, ob: dict, t: str = "") -> bool:
     if not ob["valido"]: return False
-    # Margen ampliado al 50% para aceptar precio cerca del OB, no solo dentro
+    # SHORT: acepta precio hasta 5% por debajo del OB (ya lo rompió)
+    if t == "bajista":
+        return pc <= ob["zona_alta"] and pc >= ob["zona_baja"] * 0.95
+    # LONG: acepta precio hasta 5% por encima del OB (ya lo rompió al alza)
+    if t == "alcista":
+        return pc >= ob["zona_baja"] and pc <= ob["zona_alta"] * 1.05
+    # Fallback generico
     m = (ob["zona_alta"] - ob["zona_baja"]) * 0.5
     return (ob["zona_baja"] - m) <= pc <= (ob["zona_alta"] + m)
 
@@ -1064,8 +1070,8 @@ def analizar(simbolo: str):
         return
     log.info(f"{simbolo} — OB encontrado: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}")
 
-    if not en_ob(pc, ob):
-        log.info(f"{simbolo} — RECHAZADO: precio fuera del OB")
+    if not en_ob(pc, ob, t):
+        log.info(f"{simbolo} — RECHAZADO: precio fuera del OB (pc=${pc:.4f}, OB=${ob['zona_baja']:.4f}-${ob['zona_alta']:.4f})")
         return
     log.info(f"{simbolo} — precio EN el OB OK")
 
