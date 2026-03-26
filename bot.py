@@ -182,7 +182,8 @@ def actualizar_tendencia_btc():
                         log.info(f"BTC rally ({cambio_7d*100:.1f}% en 7d) — solo LONG")
                 with lock:
                     estado["tendencia_btc"] = t
-                log.info(f"Tendencia BTC actualizada: {t} | cambio 7d: {cambio_7d*100:.1f}%")
+                cambio_str = f"{cambio_7d*100:.1f}%" if 'cambio_7d' in dir() else "N/A"
+                log.info(f"Tendencia BTC actualizada: {t} | cambio 7d: {cambio_str}")
         except Exception as e:
             log.error(f"Tendencia BTC: {e}")
         time.sleep(30 * 60)
@@ -603,20 +604,14 @@ def precio(simbolo: str) -> float:
     except:
         return 0.0
 
-def calcular_cantidad(pc: float) -> int:
-    """
-    Calcula la cantidad de contratos basado en riesgo del 1.5% del capital.
-    Riesgo = capital * RIESGO_PCT
-    Con SL de SL_PCT y apalancamiento, la cantidad de contratos se ajusta.
-    """
+def calcular_cantidad(pc: float, capital_pct: float = 0.50) -> int:
+    """Calcula contratos basado en el porcentaje de capital dinamico."""
     with lock:
         cap = estado["capital"]
         lev = estado["apalancamiento"]
-
-    riesgo_usdt = cap * RIESGO_PCT        # Maximo a perder en USDT
-    margen       = riesgo_usdt / SL_PCT   # Margen necesario dado el SL
+    margen = cap * capital_pct
     cant = max(1, int((margen * lev) / pc))
-    log.info(f"Riesgo: ${riesgo_usdt:.2f} USDT | Contratos: {cant}")
+    log.info(f"Capital usado: {capital_pct*100:.0f}% (${margen:.2f}) | Contratos: {cant}")
     return cant
 
 def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float) -> bool:
@@ -864,7 +859,7 @@ def abrir(simbolo, t, pc, ia):
     g_pot = riesgo_usdt * (TP_PCT / SL_PCT)  # Ganancia potencial proporcional
     p_pot = riesgo_usdt
 
-    cant = calcular_cantidad(pc)
+    cant = calcular_cantidad(pc, capital_pct)
 
     ok = ejecutar_orden(simbolo, lado, cant, sl, tp)
     if not ok:
@@ -972,7 +967,7 @@ def monitor_posiciones():
                 time.sleep(1)
         except Exception as e:
             log.error(f"Monitor posiciones: {e}")
-        time.sleep(5 * 60)
+        time.sleep(30)  # Revisar cada 30 seg, no 5 min
 
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
@@ -1151,14 +1146,13 @@ def verificar_inicio():
         log.critical(f"Errores de inicio: {errores}")
         raise SystemExit(1)
 
-    tg(f"SMC BOT v2 INICIADO\n\n"
+    tg(f"SMC BOT v13 INICIADO\n\n"
        f"Pares: {len(pares_ok)} | Capital: ${estado['capital']:.2f} USDT\n"
        f"x{estado['apalancamiento']} | TP: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}%\n"
-       f"Riesgo por op: {RIESGO_PCT*100:.1f}% del capital\n"
-       f"SL diario: {SL_DIARIO_PCT*100:.0f}%\n"
-       f"Ciclo: 5-15 min aleatorio\n"
-       f"Horario: 6am-2am hora Chile\n"
-       f"Filtro BTC: ACTIVO\n\n"
+       f"Capital dinamico: 50/75/100% segun confianza IA\n"
+       f"Trailing stop: activa desde +15%\n"
+       f"SL diario: {SL_DIARIO_PCT*100:.0f}% | Max posiciones: {MAX_POSICIONES}\n"
+       f"Ciclo: 5-15 min | Horario: 6am-2am Chile\n\n"
        f"{', '.join(pares_ok)}\n\nActivo 24/7 en Railway")
 
 # ─── DASHBOARD API ────────────────────────────────────────────────────────────
