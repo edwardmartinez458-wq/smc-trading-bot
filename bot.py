@@ -707,9 +707,17 @@ def guardar_historial(simbolo, dir_, entrada, salida, pnl, resultado, confianza_
 
 def tendencia(df: pd.DataFrame) -> str:
     if len(df) < 20: return "lateral"
-    h, l = df["high"].values, df["low"].values
-    if h[-1] > h[-4] and l[-1] > l[-4]: return "alcista"
-    if h[-1] < h[-4] and l[-1] < l[-4]: return "bajista"
+    h, l, c = df["high"].values, df["low"].values, df["close"].values
+    # Comparar contra 10 velas atras (no solo 4)
+    ventana = 10
+    hh = h[-1] > h[-ventana] and h[-1] > h[-ventana//2]
+    hl = l[-1] > l[-ventana] and l[-1] > l[-ventana//2]
+    lh = h[-1] < h[-ventana] and h[-1] < h[-ventana//2]
+    ll = l[-1] < l[-ventana] and l[-1] < l[-ventana//2]
+    # Media movil: precio actual sobre/bajo MA20
+    ma20 = c[-20:].mean()
+    if (hh and hl) or (c[-1] > ma20 * 1.01 and h[-1] > h[-5]): return "alcista"
+    if (lh and ll) or (c[-1] < ma20 * 0.99 and l[-1] < l[-5]): return "bajista"
     return "lateral"
 
 def hay_bos(df: pd.DataFrame, t: str) -> bool:
