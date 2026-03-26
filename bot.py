@@ -169,6 +169,13 @@ def actualizar_tendencia_btc():
             df = velas("XBTUSDTM", "240", 50)
             if not df.empty:
                 t = tendencia(df)
+                # Filtro de crash: si BTC cayo >8% en 7 dias, forzar bajista
+                df_d = velas("XBTUSDTM", "1440", 10)
+                if not df_d.empty and len(df_d) >= 7:
+                    cambio_7d = (df_d["close"].iloc[-1] - df_d["close"].iloc[-7]) / df_d["close"].iloc[-7]
+                    if cambio_7d < -0.08 and t != "bajista":
+                        t = "bajista"
+                        log.info(f"BTC crash detectado ({cambio_7d*100:.1f}% en 7d) — forzando tendencia bajista")
                 with lock:
                     estado["tendencia_btc"] = t
                 log.info(f"Tendencia BTC actualizada: {t}")
@@ -726,8 +733,9 @@ def hay_bos(df: pd.DataFrame, t: str) -> bool:
     pc  = u["close"].iloc[-1]
     vol = u["volume"].iloc[-1]
     vma = u["volume"].mean()
-    if t == "alcista": return pc > u["high"].iloc[:-3].max() and vol > vma * 1.3
-    if t == "bajista": return pc < u["low"].iloc[:-3].min()  and vol > vma * 1.3
+    # Reducido de 1.3 a 1.1 para capturar mas señales validas
+    if t == "alcista": return pc > u["high"].iloc[:-3].max() and vol > vma * 1.1
+    if t == "bajista": return pc < u["low"].iloc[:-3].min()  and vol > vma * 1.1
     return False
 
 def buscar_ob(df: pd.DataFrame, t: str) -> dict:
@@ -743,7 +751,8 @@ def buscar_ob(df: pd.DataFrame, t: str) -> dict:
 
 def en_ob(pc: float, ob: dict) -> bool:
     if not ob["valido"]: return False
-    m = (ob["zona_alta"] - ob["zona_baja"]) * 0.2
+    # Margen ampliado al 50% para aceptar precio cerca del OB, no solo dentro
+    m = (ob["zona_alta"] - ob["zona_baja"]) * 0.5
     return (ob["zona_baja"] - m) <= pc <= (ob["zona_alta"] + m)
 
 def contar_toques(df: pd.DataFrame, ob: dict, t: str) -> int:
