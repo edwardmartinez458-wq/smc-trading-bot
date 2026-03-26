@@ -46,7 +46,7 @@ PARES = [
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
-TP_PCT         = 0.14
+TP_PCT         = 0.07   # Reducido de 14% a 7% para cobrar ganancia mas rapido
 SL_PCT         = 0.02
 RIESGO_PCT     = 0.015   # 1.5% del capital por operacion
 MAX_POSICIONES = 7
@@ -169,16 +169,20 @@ def actualizar_tendencia_btc():
             df = velas("XBTUSDTM", "240", 50)
             if not df.empty:
                 t = tendencia(df)
-                # Filtro de crash: si BTC cayo >8% en 7 dias, forzar bajista
                 df_d = velas("XBTUSDTM", "1440", 10)
                 if not df_d.empty and len(df_d) >= 7:
                     cambio_7d = (df_d["close"].iloc[-1] - df_d["close"].iloc[-7]) / df_d["close"].iloc[-7]
+                    # Crash >8% en 7 dias: solo SHORT
                     if cambio_7d < -0.08 and t != "bajista":
                         t = "bajista"
-                        log.info(f"BTC crash detectado ({cambio_7d*100:.1f}% en 7d) — forzando tendencia bajista")
+                        log.info(f"BTC crash ({cambio_7d*100:.1f}% en 7d) — solo SHORT")
+                    # Rally >8% en 7 dias: solo LONG
+                    elif cambio_7d > 0.08 and t != "alcista":
+                        t = "alcista"
+                        log.info(f"BTC rally ({cambio_7d*100:.1f}% en 7d) — solo LONG")
                 with lock:
                     estado["tendencia_btc"] = t
-                log.info(f"Tendencia BTC actualizada: {t}")
+                log.info(f"Tendencia BTC actualizada: {t} | cambio 7d: {cambio_7d*100:.1f}%")
         except Exception as e:
             log.error(f"Tendencia BTC: {e}")
         time.sleep(30 * 60)
@@ -882,6 +886,20 @@ def _cerrar_posicion(p: dict, pc: float):
     tp_ok = (p["dir"] == "LONG" and pc >= p["tp"]) or (p["dir"] == "SHORT" and pc <= p["tp"])
     sl_ok = (p["dir"] == "LONG" and pc <= p["sl"]) or (p["dir"] == "SHORT" and pc >= p["sl"])
 
+    # Trailing stop: mover SL cuando el precio avanza 3% a favor
+    if not sl_ok and not tp_ok:
+        entrada = p["entrada"]
+        if p["dir"] == "LONG" and pc >= entrada * 1.03:
+            nuevo_sl = round(pc * (1 - SL_PCT), 6)
+            if nuevo_sl > p["sl"]:
+                p["sl"] = nuevo_sl
+                log.info(f"{p['simbolo']} — Trailing SL movido a ${nuevo_sl:.4f}")
+        elif p["dir"] == "SHORT" and pc <= entrada * 0.97:
+            nuevo_sl = round(pc * (1 + SL_PCT), 6)
+            if nuevo_sl < p["sl"]:
+                p["sl"] = nuevo_sl
+                log.info(f"{p['simbolo']} — Trailing SL movido a ${nuevo_sl:.4f}")
+
     # Cierre por cambio de tendencia: SHORT en mercado alcista o LONG en mercado bajista
     t_btc = estado.get("tendencia_btc", "lateral")
     tendencia_invertida = (p["dir"] == "SHORT" and t_btc == "alcista") or \
@@ -999,8 +1017,8 @@ def analizar(simbolo: str):
 
     tk = contar_toques(df_4h, ob, t)
     log.info(f"{simbolo} — toques en OB: {tk}/3")
-    if tk < 3:
-        log.info(f"{simbolo} — RECHAZADO: solo {tk} toques (necesita 3)")
+    if tk < 2:
+        log.info(f"{simbolo} — RECHAZADO: solo {tk} toques (necesita 2)")
         return
 
     if not confirma_1h(df_1h, t):
