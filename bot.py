@@ -49,8 +49,8 @@ APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
 TP_PCT         = 0.07   # Reducido de 14% a 7% para cobrar ganancia mas rapido
 SL_PCT         = 0.02
 RIESGO_PCT     = 0.015   # 1.5% del capital por operacion
-MAX_POSICIONES = 7
-CB_LIMITE      = 2
+MAX_POSICIONES = 3
+CB_LIMITE      = 3
 BASE_URL       = "https://api-futures.kucoin.com"
 
 # Stop loss global diario: si el capital cae mas de 10% en el dia -> pausar
@@ -839,8 +839,8 @@ RAZON: una linea breve"""}]
             if intento < 2:
                 time.sleep(5)
 
-    log.warning(f"{simbolo} IA no disponible — fallback tecnico 5/5")
-    return {"entrar": True, "confianza": 100, "razon": "Fallback tecnico 5/5 (IA no disponible)"}
+    log.warning(f"{simbolo} — IA no disponible, operacion cancelada por seguridad")
+    return {"entrar": False, "confianza": 0, "razon": "IA no disponible"}
 
 # ─── POSICIONES ───────────────────────────────────────────────────────────────
 
@@ -851,8 +851,16 @@ def abrir(simbolo, t, pc, ia):
     sl     = round(pc * (1 - SL_PCT) if lado == "buy" else pc * (1 + SL_PCT), 6)
     tp     = round(pc * (1 + TP_PCT) if lado == "buy" else pc * (1 - TP_PCT), 6)
 
-    # Riesgo fijo: 1.5% del capital
-    riesgo_usdt = estado["capital"] * RIESGO_PCT
+    # Riesgo dinamico segun confianza IA
+    confianza = ia.get("confianza", 55)
+    if confianza >= 85:
+        riesgo_pct = 0.03
+    elif confianza >= 70:
+        riesgo_pct = 0.02
+    else:
+        riesgo_pct = 0.01
+    riesgo_usdt = estado["capital"] * riesgo_pct
+    log.info(f"{simbolo} — confianza IA {confianza}% → riesgo {riesgo_pct*100:.0f}% (${riesgo_usdt:.2f})")
     g_pot = riesgo_usdt * (TP_PCT / SL_PCT)  # Ganancia potencial proporcional
     p_pot = riesgo_usdt
 
@@ -938,6 +946,14 @@ def _cerrar_posicion(p: dict, pc: float):
        f"Capital: ${cap:.2f} | WR: {wr:.0f}%")
 
     recalcular_capital()
+
+    # Re-entrada: si fue TP y el mercado sigue en la misma direccion, re-analiza en 5 min
+    if tp_ok:
+        def reentrada():
+            time.sleep(5 * 60)
+            log.info(f"{p['simbolo']} — re-evaluando tras TP")
+            analizar(p["simbolo"])
+        threading.Thread(target=reentrada, daemon=True).start()
 
     if ps >= CB_LIMITE:
         with lock:
