@@ -872,6 +872,16 @@ def abrir(simbolo, t, pc, ia):
 def _cerrar_posicion(p: dict, pc: float):
     tp_ok = (p["dir"] == "LONG" and pc >= p["tp"]) or (p["dir"] == "SHORT" and pc <= p["tp"])
     sl_ok = (p["dir"] == "LONG" and pc <= p["sl"]) or (p["dir"] == "SHORT" and pc >= p["sl"])
+
+    # Cierre por cambio de tendencia: SHORT en mercado alcista o LONG en mercado bajista
+    t_btc = estado.get("tendencia_btc", "lateral")
+    tendencia_invertida = (p["dir"] == "SHORT" and t_btc == "alcista") or \
+                          (p["dir"] == "LONG"  and t_btc == "bajista")
+    if tendencia_invertida:
+        log.info(f"{p['simbolo']} — CIERRE por cambio tendencia BTC ({t_btc}) contra {p['dir']}")
+        tp_ok = False
+        sl_ok = True  # se trata como SL para el calculo de PnL real
+
     if not (tp_ok or sl_ok):
         return
 
