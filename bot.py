@@ -914,7 +914,6 @@ def monitor_posiciones():
         time.sleep(5 * 60)
 
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
-notepad C:\trading-bot\bot.py
 ```
 
 Presiona **Ctrl+H** (buscar y reemplazar), y:
