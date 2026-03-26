@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMC Bot — Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --border: #1e1e2e;
+    --accent: #00ff9d;
+    --accent2: #ff6b35;
+    --warn: #ffcc00;
+    --danger: #ff3b5c;
+    --text: #e8e8f0;
+    --muted: #555566;
+    --card: #13131c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(ellipse at 30% 20%, rgba(0,255,157,0.04) 0%, transparent 50%),
+                radial-gradient(ellipse at 70% 80%, rgba(255,107,53,0.04) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* HEADER */
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10,10,15,0.92);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+  }
+  .logo {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .logo-dot {
+    width: 8px; height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.8); }
+  }
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+  }
+  .status-badge {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    letter-spacing: 0.1em;
+  }
+  .status-badge.offline { border-color: var(--danger); color: var(--danger); }
+  #last-update {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+  }
+
+  /* MAIN */
+  main {
+    position: relative;
+    z-index: 1;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+  }
+
+  /* STATS TOP ROW */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .stat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .stat-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .stat-card:hover::after { opacity: 1; }
+  .stat-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+  .stat-value {
+    font-size: 1.8rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--text);
+  }
+  .stat-value.positive { color: var(--accent); }
+  .stat-value.negative { color: var(--danger); }
+  .stat-sub {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 0.4rem;
+  }
+
+  /* GRID LAYOUT */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  /* CARDS */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .card-body { padding: 1.25rem 1.5rem; }
+
+  /* POSITIONS TABLE */
+  .pos-table { width: 100%; border-collapse: collapse; }
+  .pos-table th {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    text-transform: uppercase;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .pos-table td {
+    padding: 0.75rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    border-bottom: 1px solid rgba(30,30,46,0.5);
+  }
+  .pos-table tr:last-child td { border-bottom: none; }
+  .pos-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .side-long { color: var(--accent); font-weight: 700; }
+  .side-short { color: var(--danger); font-weight: 700; }
+  .pnl-pos { color: var(--accent); }
+  .pnl-neg { color: var(--danger); }
+  .empty-msg {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-align: center;
+    padding: 2rem;
+  }
+
+  /* LOGS */
+  .log-list {
+    max-height: 280px;
+    overflow-y: auto;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    line-height: 1.8;
+  }
+  .log-list::-webkit-scrollbar { width: 4px; }
+  .log-list::-webkit-scrollbar-track { background: transparent; }
+  .log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .log-item {
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.2rem 0;
+    border-bottom: 1px solid rgba(30,30,46,0.3);
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; } }
+  .log-time { color: var(--muted); flex-shrink: 0; }
+  .log-msg { color: var(--text); word-break: break-all; }
+  .log-msg.info { color: #7eb8ff; }
+  .log-msg.warn { color: var(--warn); }
+  .log-msg.error { color: var(--danger); }
+
+  /* HISTORIAL */
+  .hist-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid rgba(30,30,46,0.4);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+  }
+  .hist-item:last-child { border-bottom: none; }
+  .hist-left { display: flex; flex-direction: column; gap: 2px; }
+  .hist-par { color: var(--text); font-weight: 700; }
+  .hist-date { color: var(--muted); font-size: 0.6rem; }
+  .hist-right { text-align: right; }
+
+  /* CONTROLS */
+  .controls {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .btn {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-transform: uppercase;
+  }
+  .btn-pause { background: transparent; border-color: var(--warn); color: var(--warn); }
+  .btn-pause:hover { background: var(--warn); color: var(--bg); }
+  .btn-resume { background: transparent; border-color: var(--accent); color: var(--accent); }
+  .btn-resume:hover { background: var(--accent); color: var(--bg); }
+  .btn-report { background: transparent; border-color: var(--muted); color: var(--muted); }
+  .btn-report:hover { border-color: var(--text); color: var(--text); }
+
+  /* MONITORS */
+  .monitors {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+  }
+  .monitor-chip {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.62rem;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .monitor-chip .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s infinite;
+  }
+  .monitor-chip.active { border-color: rgba(0,255,157,0.3); color: var(--accent); }
+
+  /* TRUMP SECTION */
+  .trump-feed {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .trump-post {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+  .trump-post:last-child { border-bottom: none; }
+  .trump-meta {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .no-posts {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--muted);
+    padding: 1.5rem;
+    text-align: center;
+  }
+
+  /* PAUSED BANNER */
+  #paused-banner {
+    display: none;
+    background: rgba(255,204,0,0.08);
+    border: 1px solid var(--warn);
+    border-radius: 8px;
+    padding: 0.75rem 1.25rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--warn);
+    margin-bottom: 1.5rem;
+    text-align: center;
+    letter-spacing: 0.1em;
+  }
+
+  /* NOTIFICATION */
+  #notif {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    background: var(--card);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 0.75rem 1.25rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--accent);
+    z-index: 999;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.3s;
+    pointer-events: none;
+  }
+  #notif.show { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    SMC_BOT
+  </div>
+  <div class="header-right">
+    <span id="status-badge" class="status-badge">ONLINE</span>
+    <span id="last-update">--:--:--</span>
+  </div>
+</header>
+
+<main>
+  <div id="paused-banner">⚠ BOT EN PAUSA — Sin operar</div>
+
+  <!-- CONTROLS -->
+  <div class="controls">
+    <button class="btn btn-pause" onclick="pausar()">⏸ Pausar</button>
+    <button class="btn btn-resume" onclick="reactivar()">▶ Reactivar</button>
+    <button class="btn btn-report" onclick="reporte()">📊 Reporte</button>
+  </div>
+
+  <!-- MONITORS -->
+  <div class="monitors">
+    <div class="monitor-chip active"><div class="dot"></div> SMC MARKET</div>
+    <div class="monitor-chip active"><div class="dot"></div> TRUMP MONITOR</div>
+    <div class="monitor-chip active"><div class="dot"></div> FED MONITOR</div>
+    <div class="monitor-chip active"><div class="dot"></div> KUCOIN API</div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Balance USDT</div>
+      <div class="stat-value positive" id="capital">$—</div>
+      <div class="stat-sub">Capital disponible</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">P&L Abierto</div>
+      <div class="stat-value" id="pnl-total">$—</div>
+      <div class="stat-sub">Posiciones activas</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Posiciones</div>
+      <div class="stat-value" id="num-pos">—</div>
+      <div class="stat-sub">Abiertas ahora</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Pares activos</div>
+      <div class="stat-value" id="num-pares">—</div>
+      <div class="stat-sub">Monitoreados</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Ciclo actual</div>
+      <div class="stat-value" id="ciclo">—</div>
+      <div class="stat-sub">Iteraciones</div>
+    </div>
+  </div>
+
+  <!-- POSITIONS + LOGS -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Posiciones abiertas</span>
+        <span class="card-title" id="pos-count">0</span>
+      </div>
+      <div class="card-body" style="padding:0">
+        <table class="pos-table">
+          <thead>
+            <tr>
+              <th>Par</th>
+              <th>Lado</th>
+              <th>Entrada</th>
+              <th>Actual</th>
+              <th>P&L</th>
+            </tr>
+          </thead>
+          <tbody id="pos-tbody">
+            <tr><td colspan="5"><div class="empty-msg">Sin posiciones abiertas</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Log en vivo</span>
+        <span class="card-title" id="log-count">0 entradas</span>
+      </div>
+      <div class="card-body" style="padding: 0.75rem 1rem">
+        <div class="log-list" id="log-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORIAL + TRUMP -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Historial de operaciones</span>
+      </div>
+      <div class="card-body" style="padding:0 1.5rem">
+        <div id="hist-list"><div class="empty-msg">Sin historial</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Trump Monitor</span>
+        <span class="card-title" id="trump-count">0 posts</span>
+      </div>
+      <div class="trump-feed" id="trump-feed">
+        <div class="no-posts">Sin posts recientes</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="notif"></div>
+
+<script>
+  const BASE = '';
+
+  function showNotif(msg, color) {
+    const n = document.getElementById('notif');
+    n.textContent = msg;
+    n.style.borderColor = color || 'var(--accent)';
+    n.style.color = color || 'var(--accent)';
+    n.classList.add('show');
+    setTimeout(() => n.classList.remove('show'), 3000);
+  }
+
+  function fmt(n) {
+    if (n === undefined || n === null) return '—';
+    return parseFloat(n).toFixed(2);
+  }
+
+  async function cargarEstado() {
+    try {
+      const r = await fetch(BASE + '/api/estado');
+      if (!r.ok) throw new Error();
+      const d = await r.json();
+
+      document.getElementById('capital').textContent = '$' + fmt(d.capital);
+      document.getElementById('num-pares').textContent = (d.pares_activos || []).length;
+      document.getElementById('ciclo').textContent = d.ciclo || '—';
+
+      const badge = document.getElementById('status-badge');
+      if (d.pausado) {
+        badge.textContent = 'PAUSADO';
+        badge.className = 'status-badge offline';
+        document.getElementById('paused-banner').style.display = 'block';
+      } else {
+        badge.textContent = 'ONLINE';
+        badge.className = 'status-badge';
+        document.getElementById('paused-banner').style.display = 'none';
+      }
+
+      // Posiciones
+      const pos = d.posiciones || [];
+      document.getElementById('num-pos').textContent = pos.length;
+      document.getElementById('pos-count').textContent = pos.length;
+      const tbody = document.getElementById('pos-tbody');
+      if (pos.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5"><div class="empty-msg">Sin posiciones abiertas</div></td></tr>';
+      } else {
+        let pnlTotal = 0;
+        tbody.innerHTML = pos.map(p => {
+          const pnl = parseFloat(p.pnl || 0);
+          pnlTotal += pnl;
+          const pnlClass = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+          const sideClass = (p.lado || '').toUpperCase() === 'LONG' ? 'side-long' : 'side-short';
+          return `<tr>
+            <td>${p.simbolo || '—'}</td>
+            <td class="${sideClass}">${(p.lado || '—').toUpperCase()}</td>
+            <td>$${fmt(p.entrada)}</td>
+            <td>$${fmt(p.precio_actual)}</td>
+            <td class="${pnlClass}">${pnl >= 0 ? '+' : ''}$${fmt(pnl)}</td>
+          </tr>`;
+        }).join('');
+        const pnlEl = document.getElementById('pnl-total');
+        pnlEl.textContent = (pnlTotal >= 0 ? '+' : '') + '$' + fmt(pnlTotal);
+        pnlEl.className = 'stat-value ' + (pnlTotal >= 0 ? 'positive' : 'negative');
+      }
+
+      document.getElementById('last-update').textContent = new Date().toLocaleTimeString('es-CL');
+    } catch(e) {
+      document.getElementById('status-badge').textContent = 'ERROR';
+      document.getElementById('status-badge').className = 'status-badge offline';
+    }
+  }
+
+  async function cargarLogs() {
+    try {
+      const r = await fetch(BASE + '/api/logs');
+      if (!r.ok) return;
+      const d = await r.json();
+      const logs = (d.logs || []).slice(-50).reverse();
+      document.getElementById('log-count').textContent = logs.length + ' entradas';
+      const list = document.getElementById('log-list');
+      list.innerHTML = logs.map(l => {
+        const lvl = (l.nivel || '').toLowerCase();
+        let cls = 'log-msg';
+        if (lvl === 'error') cls += ' error';
+        else if (lvl === 'warning' || lvl === 'warn') cls += ' warn';
+        else cls += ' info';
+        const time = (l.tiempo || '').slice(11, 19);
+        return `<div class="log-item"><span class="log-time">${time}</span><span class="${cls}">${l.mensaje || l}</span></div>`;
+      }).join('');
+    } catch(e) {}
+  }
+
+  async function cargarHistorial() {
+    try {
+      const r = await fetch(BASE + '/api/historial');
+      if (!r.ok) return;
+      const d = await r.json();
+      const hist = d.historial || d || [];
+      const el = document.getElementById('hist-list');
+      if (!hist.length) { el.innerHTML = '<div class="empty-msg">Sin historial</div>'; return; }
+      el.innerHTML = hist.slice(-20).reverse().map(h => {
+        const pnl = parseFloat(h.pnl || 0);
+        const cls = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+        return `<div class="hist-item">
+          <div class="hist-left">
+            <span class="hist-par">${h.simbolo || '—'} <span style="color:var(--muted);font-weight:400">${(h.lado||'').toUpperCase()}</span></span>
+            <span class="hist-date">${h.fecha || h.tiempo || '—'}</span>
+          </div>
+          <div class="hist-right">
+            <div class="${cls}">${pnl >= 0 ? '+' : ''}$${fmt(pnl)}</div>
+            <div style="color:var(--muted);font-size:0.6rem">${h.motivo || ''}</div>
+          </div>
+        </div>`;
+      }).join('');
+    } catch(e) {}
+  }
+
+  async function cargarTrump() {
+    try {
+      const r = await fetch(BASE + '/api/trump');
+      if (!r.ok) return;
+      const d = await r.json();
+      const posts = d.posts || d || [];
+      document.getElementById('trump-count').textContent = posts.length + ' posts';
+      const feed = document.getElementById('trump-feed');
+      if (!posts.length) { feed.innerHTML = '<div class="no-posts">Sin posts recientes</div>'; return; }
+      feed.innerHTML = posts.slice(-10).reverse().map(p => `
+        <div class="trump-post">
+          <div>${p.texto || p.text || p}</div>
+          <div class="trump-meta">${p.fecha || p.time || ''}</div>
+        </div>
+      `).join('');
+    } catch(e) {}
+  }
+
+  async function pausar() {
+    try {
+      const r = await fetch(BASE + '/api/pausar', { method: 'POST' });
+      const d = await r.json();
+      showNotif(d.mensaje || 'Bot pausado', 'var(--warn)');
+      cargarEstado();
+    } catch(e) { showNotif('Error al pausar', 'var(--danger)'); }
+  }
+
+  async function reactivar() {
+    try {
+      const r = await fetch(BASE + '/api/reactivar', { method: 'POST' });
+      const d = await r.json();
+      showNotif(d.mensaje || 'Bot reactivado', 'var(--accent)');
+      cargarEstado();
+    } catch(e) { showNotif('Error al reactivar', 'var(--danger)'); }
+  }
+
+  async function reporte() {
+    showNotif('Enviando reporte a Telegram...', 'var(--accent)');
+  }
+
+  function actualizarTodo() {
+    cargarEstado();
+    cargarLogs();
+    cargarHistorial();
+    cargarTrump();
+  }
+
+  actualizarTodo();
+  setInterval(actualizarTodo, 15000);
+</script>
+</body>
+</html>
