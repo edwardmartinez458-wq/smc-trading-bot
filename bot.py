@@ -727,15 +727,26 @@ def tendencia(df: pd.DataFrame) -> str:
     if (lh and ll) or (c[-1] < ma20 * 0.99 and l[-1] < l[-5]): return "bajista"
     return "lateral"
 
-def hay_bos(df: pd.DataFrame, t: str) -> bool:
-    if len(df) < 20: return False
-    u   = df.tail(20)
-    pc  = u["close"].iloc[-1]
-    vol = u["volume"].iloc[-1]
-    vma = u["volume"].mean()
-    # Reducido de 1.3 a 1.1 para capturar mas señales validas
-    if t == "alcista": return pc > u["high"].iloc[:-3].max() and vol > vma * 1.1
-    if t == "bajista": return pc < u["low"].iloc[:-3].min()  and vol > vma * 1.1
+def hay_bos(df4h: pd.DataFrame, t: str, simbolo: str = "") -> bool:
+    # BOS: 2 velas consecutivas de 15min en la misma direccion
+    try:
+        if simbolo:
+            df15 = velas(simbolo, "15", 10)
+            if not df15.empty and len(df15) >= 3:
+                c = df15["close"].values
+                o = df15["open"].values
+                if t == "alcista" and c[-1] > o[-1] and c[-2] > o[-2]:
+                    return True
+                if t == "bajista" and c[-1] < o[-1] and c[-2] < o[-2]:
+                    return True
+    except Exception:
+        pass
+    # Fallback sin requisito de volumen
+    if len(df4h) < 20: return False
+    u  = df4h.tail(20)
+    pc = u["close"].iloc[-1]
+    if t == "alcista": return pc > u["high"].iloc[:-3].max()
+    if t == "bajista": return pc < u["low"].iloc[:-3].min()
     return False
 
 def buscar_ob(df: pd.DataFrame, t: str) -> dict:
@@ -1037,8 +1048,8 @@ def analizar(simbolo: str):
         log.info(f"{simbolo} — RECHAZADO: tendencia lateral")
         return
 
-    if not hay_bos(df_4h, t):
-        log.info(f"{simbolo} — RECHAZADO: sin BOS en 4H")
+    if not hay_bos(df_4h, t, simbolo):
+        log.info(f"{simbolo} — RECHAZADO: sin BOS en 15min/4H")
         return
     log.info(f"{simbolo} — BOS OK")
 
