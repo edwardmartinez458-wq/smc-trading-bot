@@ -914,51 +914,7 @@ def monitor_posiciones():
         time.sleep(5 * 60)
 
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
-```
 
-Presiona **Ctrl+H** (buscar y reemplazar), y:
-
-- En **"Buscar"** pega esto exactamente:
-```
-def analizar(simbolo: str):
-    with lock:
-        if estado["circuit_breaker"]: return
-        if len(estado["posiciones"]) >= MAX_POSICIONES: return
-        if any(p["simbolo"] == simbolo for p in estado["posiciones"]): return
-    # Filtro horario: no operar de 2am a 6am Chile
-    if not en_horario_operacion():
-        log.info(f"{simbolo} — fuera de horario ({hora_chile()}h Chile) — esperando 6am")
-        return
-    df_d  = velas(simbolo, "1440", 50)
-    df_4h = velas(simbolo, "240",  100)
-    df_1h = velas(simbolo, "60",   50)
-    if df_d.empty or df_4h.empty or df_1h.empty:
-        return
-    pc = precio(simbolo)
-    if not pc: return
-    t = tendencia(df_d)
-    if t == "lateral": return
-    if not hay_bos(df_4h, t): return
-    # Filtro tendencia BTC: solo operar en la misma direccion que BTC
-    if not filtro_tendencia_btc(t):
-        log.info(f"{simbolo} — bloqueado por filtro BTC (bot va {t}, BTC va {estado['tendencia_btc']})")
-        return
-    ob = buscar_ob(df_4h, t)
-    if not ob["valido"] or not en_ob(pc, ob): return
-    tk = contar_toques(df_4h, ob, t)
-    if tk < 3: return
-    if not confirma_1h(df_1h, t): return
-    log.info(f"{simbolo} 5/5 — consultando IA...")
-    ia = filtro_ia(simbolo, t, pc, ob, tk)
-    if not ia["entrar"]:
-        log.info(f"{simbolo} IA rechaza ({ia['confianza']}%): {ia['razon']}")
-        return
-    log.info(f"{simbolo} IA aprueba {ia['confianza']}% — ejecutando")
-    abrir(simbolo, t, pc, ia)
-```
-
-- En **"Reemplazar con"** pega esto:
-```
 def analizar(simbolo: str):
     with lock:
         if estado["circuit_breaker"]:
