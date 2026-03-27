@@ -839,8 +839,8 @@ def tendencia(df: pd.DataFrame) -> str:
     if len(df) < 20: return "lateral"
     c = df["close"].values
     ma20 = c[-20:].mean()
-    if c[-1] > ma20 * 1.005: return "alcista"
-    if c[-1] < ma20 * 0.995: return "bajista"
+    if c[-1] > ma20 * 1.002: return "alcista"
+    if c[-1] < ma20 * 0.998: return "bajista"
     return "lateral"
 
 def hay_bos(df4h: pd.DataFrame, t: str, simbolo: str = "") -> bool:
@@ -870,9 +870,9 @@ def buscar_ob(df: pd.DataFrame, t: str) -> dict:
     if len(df) < 30: return empty
     for i in range(len(df) - 5, max(len(df) - 25, 0), -1):
         v, s = df.iloc[i], df.iloc[i+1]
-        if t == "alcista" and v["close"] < v["open"] and (s["close"]-s["open"]) > s["open"]*0.004:
+        if t == "alcista" and v["close"] < v["open"] and (s["close"]-s["open"]) > s["open"]*0.002:
             return {"zona_alta": v["open"], "zona_baja": v["close"], "valido": True}
-        if t == "bajista" and v["close"] > v["open"] and (v["open"]-s["close"]) > s["open"]*0.004:
+        if t == "bajista" and v["close"] > v["open"] and (v["open"]-s["close"]) > s["open"]*0.002:
             return {"zona_alta": v["close"], "zona_baja": v["open"], "valido": True}
     return empty
 
@@ -1207,8 +1207,8 @@ def analizar(simbolo: str):
 
     tk = contar_toques(df_4h, ob, t)
     log.info(f"{simbolo} — toques en OB: {tk}/3")
-    if tk < 2:
-        log.info(f"{simbolo} — RECHAZADO: solo {tk} toques (necesita 2)")
+    if tk < 1:
+        log.info(f"{simbolo} — RECHAZADO: solo {tk} toques (necesita 1)")
         return
 
     if not confirma_1h(df_1h, t):
