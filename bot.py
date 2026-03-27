@@ -851,12 +851,12 @@ def hay_bos(df4h: pd.DataFrame, t: str, simbolo: str = "") -> bool:
     try:
         if simbolo:
             df15 = velas(simbolo, "15", 10)
-            if not df15.empty and len(df15) >= 3:
+            if not df15.empty and len(df15) >= 4:
                 c = df15["close"].values
                 o = df15["open"].values
-                if t == "alcista" and c[-1] > o[-1] and c[-2] > o[-2]:
+                if t == "alcista" and sum(1 for i in [-1,-2,-3] if c[i]>o[i]) >= 2:
                     return True
-                if t == "bajista" and c[-1] < o[-1] and c[-2] < o[-2]:
+                if t == "bajista" and sum(1 for i in [-1,-2,-3] if c[i]<o[i]) >= 2:
                     return True
     except Exception:
         pass
@@ -907,11 +907,15 @@ def contar_toques(df: pd.DataFrame, ob: dict, t: str) -> int:
     return toques
 
 def confirma_1h(df: pd.DataFrame, t: str) -> bool:
-    # Confirmacion rapida: 2 velas de 5min consecutivas en la misma direccion
-    if len(df) < 3: return False
+    # Confirmacion: 2 de las ultimas 3 velas de 15min en la misma direccion
+    if len(df) < 4: return False
     c, o = df["close"].values, df["open"].values
-    if t == "alcista": return c[-1] > o[-1] and c[-2] > o[-2]
-    if t == "bajista": return c[-1] < o[-1] and c[-2] < o[-2]
+    if t == "alcista":
+        alcistas = sum(1 for i in [-1,-2,-3] if c[i] > o[i])
+        return alcistas >= 2
+    if t == "bajista":
+        bajistas = sum(1 for i in [-1,-2,-3] if c[i] < o[i])
+        return bajistas >= 2
     return False
 
 # ─── FILTRO IA ────────────────────────────────────────────────────────────────
