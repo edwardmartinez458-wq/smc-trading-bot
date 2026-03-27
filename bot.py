@@ -346,7 +346,7 @@ def es_relevante_para_crypto(texto: str) -> bool:
 def analizar_trump_ia(texto: str) -> dict:
     try:
         r = ai.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=200,
             messages=[{"role": "user", "content": f"""Eres un analista de mercados crypto. Trump publico esto en Truth Social:
 
@@ -934,7 +934,7 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
     for intento in range(3):
         try:
             r = ai.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=150,
                 messages=[{"role": "user", "content": f"""Eres el filtro de riesgo de un bot SMC. Decide si entrar o no.
 
@@ -1279,7 +1279,7 @@ def verificar_inicio():
     log.info("Verificando Anthropic API...")
     try:
         ai.messages.create(
-            model="claude-sonnet-4-20250514", max_tokens=5,
+            model="claude-sonnet-4-6", max_tokens=5,
             messages=[{"role": "user", "content": "ok"}]
         )
         log.info("Anthropic OK")
