@@ -718,14 +718,26 @@ def precio(simbolo: str) -> float:
     except:
         return 0.0
 
-def calcular_cantidad(pc: float, capital_pct: float = 0.50) -> int:
-    """Calcula contratos basado en el porcentaje de capital dinamico."""
+_multiplicadores = {}
+
+def obtener_multiplicador(simbolo: str) -> float:
+    if simbolo not in _multiplicadores:
+        try:
+            d = requests.get(f"{BASE_URL}/api/v1/contracts/{simbolo}", timeout=10).json()
+            _multiplicadores[simbolo] = float(d.get("data", {}).get("multiplier", 1))
+        except:
+            _multiplicadores[simbolo] = 1.0
+    return _multiplicadores[simbolo]
+
+def calcular_cantidad(simbolo: str, pc: float, capital_pct: float = 0.50) -> int:
+    """Calcula contratos usando el multiplicador real del contrato."""
     with lock:
         cap = estado["capital"]
         lev = estado["apalancamiento"]
-    margen = cap * capital_pct
-    cant = max(1, int((margen * lev) / pc))
-    log.info(f"Capital usado: {capital_pct*100:.0f}% (${margen:.2f}) | Contratos: {cant}")
+    mult   = obtener_multiplicador(simbolo)
+    margen = cap * capital_pct * 0.90  # 10% buffer para fees
+    cant   = max(1, int((margen * lev) / (pc * mult)))
+    log.info(f"Capital usado: {capital_pct*100:.0f}% (${margen:.2f}) | mult={mult} | Contratos: {cant}")
     return cant
 
 def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float) -> bool:
@@ -982,7 +994,10 @@ def abrir(simbolo, t, pc, ia):
     g_pot = riesgo_usdt * (TP_PCT / SL_PCT)  # Ganancia potencial proporcional
     p_pot = riesgo_usdt
 
-    cant = calcular_cantidad(pc, capital_pct)
+    cant = calcular_cantidad(simbolo, pc, capital_pct)
+
+    # Ajustar apalancamiento en KuCoin antes de abrir
+    kc_post("/api/v2/changeCrossUserLeverage", {"symbol": simbolo, "leverage": str(estado["apalancamiento"])})
 
     sl_oid = ejecutar_orden(simbolo, lado, cant, sl, tp)
     if not sl_oid:
