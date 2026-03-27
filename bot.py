@@ -761,7 +761,7 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "type":          "market",
         "stop":          "down" if lado == "buy" else "up",
         "stopPrice":     str(sl),
-        "stopPriceType": "TP",
+        "stopPriceType": "MP",
         "size":          cantidad,
         "leverage":      str(lev),
         "reduceOnly":    True,
@@ -775,7 +775,7 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "type":          "market",
         "stop":          "up" if lado == "buy" else "down",
         "stopPrice":     str(tp),
-        "stopPriceType": "TP",
+        "stopPriceType": "MP",
         "size":          cantidad,
         "leverage":      str(lev),
         "reduceOnly":    True,
@@ -996,8 +996,8 @@ def abrir(simbolo, t, pc, ia):
 
     cant = calcular_cantidad(simbolo, pc, capital_pct)
 
-    # Ajustar apalancamiento en KuCoin antes de abrir
-    kc_post("/api/v2/changeCrossUserLeverage", {"symbol": simbolo, "leverage": str(estado["apalancamiento"])})
+    # Ajustar apalancamiento en KuCoin antes de abrir (modo ISOLATED)
+    kc_post("/api/v2/changeIsolatedUserLeverage", {"symbol": simbolo, "leverage": str(estado["apalancamiento"]), "side": "BOTH"})
 
     sl_oid = ejecutar_orden(simbolo, lado, cant, sl, tp)
     if not sl_oid:
@@ -1034,11 +1034,11 @@ def _cerrar_posicion(p: dict, pc: float):
         entrada  = p["entrada"]
         mover    = False
         nuevo_sl = p["sl"]
-        if p["dir"] == "LONG" and pc >= entrada * 1.10:
+        if p["dir"] == "LONG" and pc >= entrada * 1.08:
             candidato = round(pc * (1 - SL_PCT), 6)
             if candidato > p["sl"]:
                 nuevo_sl = candidato; mover = True
-        elif p["dir"] == "SHORT" and pc <= entrada * 0.90:
+        elif p["dir"] == "SHORT" and pc <= entrada * 0.92:
             candidato = round(pc * (1 + SL_PCT), 6)
             if candidato < p["sl"]:
                 nuevo_sl = candidato; mover = True
@@ -1055,7 +1055,7 @@ def _cerrar_posicion(p: dict, pc: float):
                 "type":          "market",
                 "stop":          "down" if p["dir"] == "LONG" else "up",
                 "stopPrice":     str(nuevo_sl),
-                "stopPriceType": "TP",
+                "stopPriceType": "MP",
                 "size":          p.get("cantidad", 1),
                 "reduceOnly":    True,
                 "marginMode":    "ISOLATED",
