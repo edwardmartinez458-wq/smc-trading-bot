@@ -35,12 +35,9 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
-    "SOLUSDTM",
-    "ETHUSDTM",
     "XBTUSDTM",
-    "AVAXUSDTM",
-    "LINKUSDTM",
-    "DOTUSDTM",
+    "ETHUSDTM",
+    "SOLUSDTM",
     "XRPUSDTM",
 ]
 
