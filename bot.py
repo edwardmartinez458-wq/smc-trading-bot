@@ -1123,6 +1123,15 @@ def _cerrar_posicion(p: dict, pc: float):
             analizar(p["simbolo"])
         threading.Thread(target=reentrada, daemon=True).start()
 
+    # Re-entrada: si se cerro por cambio de tendencia, re-analiza en 2 min en la nueva direccion
+    if tendencia_invertida:
+        sim = p["simbolo"]
+        def reentrada_reversion(s=sim):
+            time.sleep(2 * 60)
+            log.info(f"{s} — re-evaluando tras cambio de tendencia")
+            analizar(s)
+        threading.Thread(target=reentrada_reversion, daemon=True).start()
+
     if ps >= CB_LIMITE:
         with lock:
             estado["circuit_breaker"] = True
