@@ -52,10 +52,6 @@ BASE_URL       = "https://api-futures.kucoin.com"
 # Stop loss global diario: si el capital cae mas de 10% en el dia -> pausar
 SL_DIARIO_PCT  = 0.30  # 30% diario — compatible con SL 10% por trade
 
-# Horario: no operar entre 2am y 6am hora Chile (UTC-3 / UTC-4 segun DST)
-HORA_INICIO    = 6   # 6am Chile
-HORA_FIN       = 2   # 2am Chile (es decir, operar de 6am a 2am)
-
 # Ciclo aleatorio entre 5 y 15 minutos
 CICLO_MIN_SEG  = 5 * 60
 CICLO_MAX_SEG  = 15 * 60
@@ -101,7 +97,6 @@ estado = {
     "trump_direccion":   "",
     "tendencia_btc":     "lateral",  # Para filtro tendencia mayor
     "ciclo":             0,
-    "pausado":           False,
     "sl_diario_activo":  False,
 }
 lock = threading.Lock()
@@ -660,6 +655,23 @@ def kc_get(endpoint: str, params: dict = None) -> dict:
             return {}
     return {}
 
+def kc_delete(endpoint: str) -> dict:
+    for intento in range(3):
+        try:
+            r = requests.delete(
+                f"{BASE_URL}{endpoint}",
+                headers=kc_headers("DELETE", endpoint),
+                timeout=10
+            )
+            d = r.json()
+            if d.get("code") == "200000":
+                return d
+            log.warning(f"KuCoin DELETE {endpoint}: {d.get('code')} {d.get('msg')}")
+            return {}
+        except Exception as e:
+            log.error(f"KuCoin DELETE {endpoint}: {e}")
+    return {}
+
 def kc_post(endpoint: str, body: dict) -> dict:
     for intento in range(4):
         try:
@@ -1029,7 +1041,7 @@ def _cerrar_posicion(p: dict, pc: float):
     tp_ok = (p["dir"] == "LONG" and pc >= p["tp"]) or (p["dir"] == "SHORT" and pc <= p["tp"])
     sl_ok = (p["dir"] == "LONG" and pc <= p["sl"]) or (p["dir"] == "SHORT" and pc >= p["sl"])
 
-    # Trailing stop: mover SL en KuCoin cuando precio avanza 15% a favor
+    # Trailing stop: mover SL en KuCoin cuando precio avanza 8% a favor
     if not sl_ok and not tp_ok:
         entrada  = p["entrada"]
         mover    = False
@@ -1045,7 +1057,8 @@ def _cerrar_posicion(p: dict, pc: float):
         if mover:
             close_s = "sell" if p["dir"] == "LONG" else "buy"
             # Cancelar SL anterior en KuCoin
-            kc_post(f"/api/v1/orders/{p.get('sl_oid','')}", {}) if p.get("sl_oid") else None
+            if p.get("sl_oid"):
+                kc_delete(f"/api/v1/orders/{p['sl_oid']}")
             # Colocar nuevo SL en KuCoin
             nuevo_oid = f"sl_{int(time.time()*1000)}"
             kc_post("/api/v1/orders", {
