@@ -43,11 +43,10 @@ PARES = [
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
-TP_PCT         = 0.10
-SL_PCT         = 0.10
-RIESGO_PCT     = 0.015   # 1.5% del capital por operacion
+TP_PCT         = 0.15
+SL_PCT         = 0.07
 MAX_POSICIONES = 3
-CB_LIMITE      = 3
+CB_LIMITE      = 5
 BASE_URL       = "https://api-futures.kucoin.com"
 
 # Stop loss global diario: si el capital cae mas de 10% en el dia -> pausar
@@ -110,10 +109,10 @@ lock = threading.Lock()
 # ─── UTILIDADES HORARIO ───────────────────────────────────────────────────────
 
 def hora_chile() -> int:
-    """Retorna hora actual en Chile (UTC-3)"""
+    """Retorna hora actual en UTC-4 (Venezuela, sin cambio de horario)"""
     from datetime import timezone, timedelta
-    tz_chile = timezone(timedelta(hours=-3))
-    return datetime.now(tz_chile).hour
+    tz_fija = timezone(timedelta(hours=-4))
+    return datetime.now(tz_fija).hour
 
 def en_horario_operacion() -> bool:
     """Retorna True si es horario valido para operar (6am a 2am Chile)"""
@@ -985,11 +984,11 @@ def abrir(simbolo, t, pc, ia):
     # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 55)
     if confianza >= 85:
-        capital_pct = 1.0   # 100% del capital
+        capital_pct = 0.75  # 75% del capital (max)
     elif confianza >= 70:
-        capital_pct = 0.75  # 75% del capital
+        capital_pct = 0.60  # 60% del capital
     else:
-        capital_pct = 0.50  # 50% del capital
+        capital_pct = 0.40  # 40% del capital
     riesgo_usdt = estado["capital"] * capital_pct * SL_PCT
     log.info(f"{simbolo} — confianza {confianza}% → capital {capital_pct*100:.0f}% | riesgo max ${riesgo_usdt:.2f}")
     g_pot = riesgo_usdt * (TP_PCT / SL_PCT)  # Ganancia potencial proporcional
