@@ -695,7 +695,7 @@ def kc_post(endpoint: str, body: dict) -> dict:
                 return d
             msg = d.get("msg", "")
             if any(w in msg.lower() for w in ["insufficient", "balance", "margin"]):
-                log.warning(f"Sin fondos suficientes en {endpoint}")
+                log.warning(f"Sin fondos suficientes en {endpoint} — KuCoin dice: {msg}")
                 return {"error": "insufficient_funds"}
             log.error(f"KuCoin POST {endpoint}: {d.get('code')} {msg}")
             return {}
@@ -1725,6 +1725,14 @@ def main():
             ciclo = estado["ciclo"]
 
         log.info(f"CICLO {ciclo} | {datetime.now().strftime('%Y-%m-%d %H:%M')} | Chile: {hora_chile()}h")
+
+        # Verificar balance real en KuCoin Futuros cada 5 ciclos
+        if ciclo % 5 == 1:
+            bal_real = balance_kucoin()
+            log.info(f"Balance real KuCoin Futuros: ${bal_real:.2f} USDT | Bot estado: ${estado['capital']:.2f}")
+            if bal_real > 0:
+                with lock:
+                    estado["capital"] = bal_real
 
         recalcular_capital()
 
