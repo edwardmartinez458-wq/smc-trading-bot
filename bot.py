@@ -756,12 +756,13 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
     lev = estado["apalancamiento"]
 
     r = kc_post("/api/v1/orders", {
-        "clientOid": f"smc_{int(time.time()*1000)}",
-        "symbol":    simbolo,
-        "side":      lado,
-        "type":      "market",
-        "size":      cantidad,
-        "leverage":  str(lev),
+        "clientOid":  f"smc_{int(time.time()*1000)}",
+        "symbol":     simbolo,
+        "side":       lado,
+        "type":       "market",
+        "size":       cantidad,
+        "leverage":   str(lev),
+        "marginMode": "CROSSED",
     })
     if not r or r.get("error") == "insufficient_funds":
         return False
@@ -780,6 +781,7 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "size":          cantidad,
         "leverage":      str(lev),
         "reduceOnly":    True,
+        "marginMode":    "CROSSED",
     })
 
     kc_post("/api/v1/orders", {
@@ -793,6 +795,7 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "size":          cantidad,
         "leverage":      str(lev),
         "reduceOnly":    True,
+        "marginMode":    "CROSSED",
     })
     return sl_oid
 
@@ -1069,6 +1072,7 @@ def _cerrar_posicion(p: dict, pc: float):
                 "stopPriceType": "MP",
                 "size":          p.get("cantidad", 1),
                 "reduceOnly":    True,
+                "marginMode":    "CROSSED",
             })
             p["sl"]    = nuevo_sl
             p["sl_oid"] = nuevo_oid
