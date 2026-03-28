@@ -47,6 +47,8 @@ TP_PCT         = 0.15
 SL_PCT         = 0.07
 TP_REBOTE      = 0.05   # Rebote contra tendencia: objetivo conservador
 SL_REBOTE      = 0.03   # Rebote contra tendencia: stop ajustado
+TP_BREAKOUT    = 0.05   # Breakout: objetivo conservador
+SL_BREAKOUT    = 0.025  # Breakout: stop muy ajustado
 MAX_POSICIONES = 3
 CB_LIMITE      = 5
 BASE_URL       = "https://api-futures.kucoin.com"
@@ -1227,6 +1229,117 @@ def abrir_rebote(simbolo, pc, ia):
     log.info(f"{simbolo} [REBOTE] posicion abierta | ops_total={estado['ops_total']}")
 
 
+# ─── BREAKOUT ─────────────────────────────────────────────────────────────────
+
+def detectar_breakout(simbolo: str, pc: float) -> dict:
+    """
+    Detecta rotura alcista con volumen.
+    Condiciones:
+    - Precio rompe el maximo de las ultimas 10 velas de 15min
+    - Vela de rotura con volumen >= 2x el promedio de las 10 anteriores
+    - MA7 > MA25 en 1H (momentum alcista a corto plazo)
+    Retorna dict con 'valido', 'nivel_rotura', 'vol_ratio', 'ma_ok'
+    """
+    resultado = {"valido": False, "nivel_rotura": 0, "vol_ratio": 0, "ma_ok": False}
+    try:
+        # Velas 15min para detectar rotura de maximo y volumen
+        df15 = velas(simbolo, "15", 20)
+        if df15.empty or len(df15) < 12:
+            return resultado
+        # Maximo de las 10 velas anteriores (excluye la ultima)
+        ventana = df15.iloc[-11:-1]
+        max_previo = ventana["high"].max()
+        ultima = df15.iloc[-1]
+        vol_promedio = ventana["volume"].mean()
+        vol_ultima   = ultima["volume"]
+        vol_ratio    = vol_ultima / vol_promedio if vol_promedio > 0 else 0
+        rotura = ultima["close"] > max_previo and vol_ratio >= 2.0
+
+        # MA7 > MA25 en velas 1H
+        df1h = velas(simbolo, "60", 30)
+        ma_ok = False
+        if not df1h.empty and len(df1h) >= 25:
+            ma7  = df1h["close"].values[-7:].mean()
+            ma25 = df1h["close"].values[-25:].mean()
+            ma_ok = ma7 > ma25
+
+        resultado = {
+            "valido":        rotura and ma_ok,
+            "nivel_rotura":  max_previo,
+            "vol_ratio":     round(vol_ratio, 1),
+            "ma_ok":         ma_ok,
+        }
+    except Exception as e:
+        log.error(f"detectar_breakout {simbolo}: {e}")
+    return resultado
+
+
+def filtro_ia_breakout(simbolo, pc, bk) -> dict:
+    """IA evalua si el breakout tiene continuacion."""
+    for intento in range(3):
+        try:
+            r = ai.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=150,
+                messages=[{"role": "user", "content":
+                    f"""Eres un trader experto en breakouts con volumen.
+
+Par: {simbolo} | Precio actual: ${pc:.4f}
+Nivel de rotura: ${bk['nivel_rotura']:.4f}
+Volumen de rotura: {bk['vol_ratio']}x el promedio (minimo esperado: 2x)
+MA7 > MA25 en 1H: {'SI' if bk['ma_ok'] else 'NO'}
+Objetivo LONG: +5% | Stop loss: -2.5%
+
+EVALUA si este breakout tiene momentum suficiente para continuar +5% sin pullback profundo.
+Considera: fuerza del volumen, contexto macro, probabilidad de fakeout.
+
+RESPONDE EXACTAMENTE (sin texto extra):
+DECISION: ENTRAR o NO_ENTRAR
+CONFIANZA: 0-100
+RAZON: una linea breve"""}]
+            )
+            texto = r.content[0].text.strip()
+            dec, conf, razon = "NO_ENTRAR", 0, "Sin respuesta"
+            for l in texto.split("\n"):
+                if "DECISION:" in l: dec = "ENTRAR" if "ENTRAR" in l else "NO_ENTRAR"
+                elif "CONFIANZA:" in l:
+                    try: conf = int(l.split(":")[1].strip())
+                    except: pass
+                elif "RAZON:" in l: razon = l.split(":", 1)[1].strip()
+            return {"entrar": dec == "ENTRAR" and conf >= 60, "confianza": conf, "razon": razon}
+        except Exception as e:
+            log.error(f"IA breakout intento {intento+1}: {e}")
+            if intento < 2:
+                time.sleep(5)
+    return {"entrar": False, "confianza": 0, "razon": "IA no disponible"}
+
+
+def abrir_breakout(simbolo, pc, ia):
+    """Abre un LONG de breakout con TP/SL conservadores."""
+    sl  = round(pc * (1 - SL_BREAKOUT), 6)
+    tp  = round(pc * (1 + TP_BREAKOUT), 6)
+    capital_pct = 0.35  # Conservador — breakouts pueden ser fakeouts
+    cant = calcular_cantidad(simbolo, pc, capital_pct)
+    log.info(f"{simbolo} [BREAKOUT] LONG | entrada ${pc:.4f} | TP ${tp:.4f} | SL ${sl:.4f} | capital 35%")
+    sl_oid = ejecutar_orden(simbolo, "buy", cant, sl, tp)
+    if not sl_oid:
+        return
+    with lock:
+        estado["posiciones"].append({
+            "simbolo":      simbolo,
+            "dir":          "LONG",
+            "entrada":      pc,
+            "sl":           sl,
+            "tp":           tp,
+            "sl_oid":       sl_oid,
+            "cantidad":     cant,
+            "capital_pct":  capital_pct,
+            "tipo":         "breakout",
+        })
+        estado["ops_total"] += 1
+    log.info(f"{simbolo} [BREAKOUT] posicion abierta | ops_total={estado['ops_total']}")
+
+
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
 def _trade_tendencia(simbolo, t, pc, df_4h, df_1h):
@@ -1311,11 +1424,29 @@ def analizar(simbolo: str):
     # --- Flujo principal: trade en direccion de tendencia ---
     _trade_tendencia(simbolo, t, pc, df_4h, df_1h)
 
-    # --- Flujo secundario: rebote contra tendencia ---
     with lock:
         tiene_pos = any(p["simbolo"] == simbolo for p in estado["posiciones"])
-    if not tiene_pos:
-        _check_rebote(simbolo, t, df_4h, df_1h, pc)
+    if tiene_pos:
+        return
+
+    # --- Flujo secundario: rebote contra tendencia ---
+    _check_rebote(simbolo, t, df_4h, df_1h, pc)
+
+    with lock:
+        tiene_pos = any(p["simbolo"] == simbolo for p in estado["posiciones"])
+    if tiene_pos:
+        return
+
+    # --- Flujo terciario: breakout con volumen ---
+    bk = detectar_breakout(simbolo, pc)
+    if bk["valido"]:
+        log.info(f"{simbolo} — BREAKOUT detectado | rotura ${bk['nivel_rotura']:.4f} | vol {bk['vol_ratio']}x | MA OK")
+        ia = filtro_ia_breakout(simbolo, pc, bk)
+        if ia["entrar"]:
+            log.info(f"{simbolo} — IA APRUEBA BREAKOUT {ia['confianza']}% — EJECUTANDO LONG")
+            abrir_breakout(simbolo, pc, ia)
+        else:
+            log.info(f"{simbolo} — BREAKOUT rechazado por IA ({ia['confianza']}%): {ia['razon']}")
 
 
 def _check_rebote(simbolo: str, t: str, df_4h, df_1h, pc: float):
