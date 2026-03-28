@@ -762,7 +762,6 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "type":      "market",
         "size":      cantidad,
         "leverage":  str(lev),
-        "marginMode": "ISOLATED",
     })
     if not r or r.get("error") == "insufficient_funds":
         return False
@@ -781,7 +780,6 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "size":          cantidad,
         "leverage":      str(lev),
         "reduceOnly":    True,
-        "marginMode":    "ISOLATED",
     })
 
     kc_post("/api/v1/orders", {
@@ -795,7 +793,6 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "size":          cantidad,
         "leverage":      str(lev),
         "reduceOnly":    True,
-        "marginMode":    "ISOLATED",
     })
     return sl_oid
 
@@ -1072,7 +1069,6 @@ def _cerrar_posicion(p: dict, pc: float):
                 "stopPriceType": "MP",
                 "size":          p.get("cantidad", 1),
                 "reduceOnly":    True,
-                "marginMode":    "ISOLATED",
             })
             p["sl"]    = nuevo_sl
             p["sl_oid"] = nuevo_oid
