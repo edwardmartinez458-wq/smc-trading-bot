@@ -45,6 +45,8 @@ CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
 TP_PCT         = 0.15
 SL_PCT         = 0.07
+TP_REBOTE      = 0.05   # Rebote contra tendencia: objetivo conservador
+SL_REBOTE      = 0.03   # Rebote contra tendencia: stop ajustado
 MAX_POSICIONES = 3
 CB_LIMITE      = 5
 BASE_URL       = "https://api-futures.kucoin.com"
@@ -1157,42 +1159,78 @@ def monitor_posiciones():
             log.error(f"Monitor posiciones: {e}")
         time.sleep(30)  # Revisar cada 30 seg, no 5 min
 
+# ─── REBOTE CONTRA TENDENCIA ──────────────────────────────────────────────────
+
+def filtro_ia_rebote(simbolo, pc, ob) -> dict:
+    """IA evalua si hay rebote alcista valido dentro de tendencia bajista."""
+    for intento in range(3):
+        try:
+            r = ai.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=150,
+                messages=[{"role": "user", "content":
+                    f"""Eres un trader SMC experto.
+
+Par: {simbolo} | Precio actual: ${pc:.4f}
+Contexto: TENDENCIA DIARIA BAJISTA pero se detecta rebote tecnico alcista.
+Order Block alcista en: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}
+BOS alcista confirmado en 15min. 2+ velas alcistas de confirmacion.
+Objetivo LONG conservador: +5% | Stop loss: -3%
+
+EVALUA si este rebote tiene probabilidad real de alcanzar +5% antes de ser absorbido por la tendencia bajista.
+Considera: soporte tecnico, fuerza del rebote, contexto de mercado.
+
+RESPONDE EXACTAMENTE (sin texto extra):
+DECISION: ENTRAR o NO_ENTRAR
+CONFIANZA: 0-100
+RAZON: una linea breve"""}]
+            )
+            texto = r.content[0].text.strip()
+            dec, conf, razon = "NO_ENTRAR", 0, "Sin respuesta"
+            for l in texto.split("\n"):
+                if "DECISION:" in l: dec = "ENTRAR" if "ENTRAR" in l else "NO_ENTRAR"
+                elif "CONFIANZA:" in l:
+                    try: conf = int(l.split(":")[1].strip())
+                    except: pass
+                elif "RAZON:" in l: razon = l.split(":", 1)[1].strip()
+            return {"entrar": dec == "ENTRAR" and conf >= 60, "confianza": conf, "razon": razon}
+        except Exception as e:
+            log.error(f"IA rebote intento {intento+1}: {e}")
+            if intento < 2:
+                time.sleep(5)
+    return {"entrar": False, "confianza": 0, "razon": "IA no disponible"}
+
+
+def abrir_rebote(simbolo, pc, ia):
+    """Abre un LONG de rebote con TP/SL conservadores."""
+    sl  = round(pc * (1 - SL_REBOTE), 6)
+    tp  = round(pc * (1 + TP_REBOTE), 6)
+    capital_pct = 0.40  # Siempre conservador en rebotes
+    cant = calcular_cantidad(simbolo, pc, capital_pct)
+    log.info(f"{simbolo} [REBOTE] LONG | entrada ${pc:.4f} | TP ${tp:.4f} | SL ${sl:.4f} | capital 40%")
+    sl_oid = ejecutar_orden(simbolo, "buy", cant, sl, tp)
+    if not sl_oid:
+        return
+    with lock:
+        estado["posiciones"].append({
+            "simbolo":      simbolo,
+            "dir":          "LONG",
+            "entrada":      pc,
+            "sl":           sl,
+            "tp":           tp,
+            "sl_oid":       sl_oid,
+            "cantidad":     cant,
+            "capital_pct":  capital_pct,
+            "tipo":         "rebote",
+        })
+        estado["ops_total"] += 1
+    log.info(f"{simbolo} [REBOTE] posicion abierta | ops_total={estado['ops_total']}")
+
+
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
-def analizar(simbolo: str):
-    with lock:
-        if estado["circuit_breaker"]:
-            log.info(f"{simbolo} — bloqueado: circuit breaker activo")
-            return
-        if len(estado["posiciones"]) >= MAX_POSICIONES:
-            log.info(f"{simbolo} — bloqueado: max posiciones")
-            return
-        if any(p["simbolo"] == simbolo for p in estado["posiciones"]):
-            log.info(f"{simbolo} — bloqueado: ya tiene posicion abierta")
-            return
-
-    if not en_horario_operacion():
-        log.info(f"{simbolo} — fuera de horario ({hora_chile()}h Chile)")
-        return
-
-    df_d  = velas(simbolo, "1440", 50)
-    df_4h = velas(simbolo, "240",  100)
-    df_1h = velas(simbolo, "5",    10)
-    if df_d.empty or df_4h.empty or df_1h.empty:
-        log.info(f"{simbolo} — sin datos de velas")
-        return
-
-    pc = precio(simbolo)
-    if not pc:
-        log.info(f"{simbolo} — sin precio")
-        return
-
-    t = tendencia(df_d)
-    log.info(f"{simbolo} — tendencia Daily: {t} | precio: ${pc:.4f}")
-    if t == "lateral":
-        log.info(f"{simbolo} — RECHAZADO: tendencia lateral")
-        return
-
+def _trade_tendencia(simbolo, t, pc, df_4h, df_1h):
+    """Trade en la direccion de la tendencia diaria (flujo original)."""
     if not hay_bos(df_4h, t, simbolo):
         log.info(f"{simbolo} — RECHAZADO: sin BOS en 15min/4H")
         return
@@ -1234,6 +1272,71 @@ def analizar(simbolo: str):
 
     log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
     abrir(simbolo, t, pc, ia)
+
+
+def analizar(simbolo: str):
+    with lock:
+        if estado["circuit_breaker"]:
+            log.info(f"{simbolo} — bloqueado: circuit breaker activo")
+            return
+        if len(estado["posiciones"]) >= MAX_POSICIONES:
+            log.info(f"{simbolo} — bloqueado: max posiciones")
+            return
+        if any(p["simbolo"] == simbolo for p in estado["posiciones"]):
+            log.info(f"{simbolo} — bloqueado: ya tiene posicion abierta")
+            return
+
+    if not en_horario_operacion():
+        log.info(f"{simbolo} — fuera de horario ({hora_chile()}h Chile)")
+        return
+
+    df_d  = velas(simbolo, "1440", 50)
+    df_4h = velas(simbolo, "240",  100)
+    df_1h = velas(simbolo, "5",    10)
+    if df_d.empty or df_4h.empty or df_1h.empty:
+        log.info(f"{simbolo} — sin datos de velas")
+        return
+
+    pc = precio(simbolo)
+    if not pc:
+        log.info(f"{simbolo} — sin precio")
+        return
+
+    t = tendencia(df_d)
+    log.info(f"{simbolo} — tendencia Daily: {t} | precio: ${pc:.4f}")
+    if t == "lateral":
+        log.info(f"{simbolo} — RECHAZADO: tendencia lateral")
+        return
+
+    # --- Flujo principal: trade en direccion de tendencia ---
+    _trade_tendencia(simbolo, t, pc, df_4h, df_1h)
+
+    # --- Flujo secundario: rebote contra tendencia ---
+    with lock:
+        tiene_pos = any(p["simbolo"] == simbolo for p in estado["posiciones"])
+    if not tiene_pos:
+        _check_rebote(simbolo, t, df_4h, df_1h, pc)
+
+
+def _check_rebote(simbolo: str, t: str, df_4h, df_1h, pc: float):
+    """Busca rebote alcista en tendencia bajista (o bajista en alcista)."""
+    dir_rebote = "alcista" if t == "bajista" else "bajista"
+    if not hay_bos(df_4h, dir_rebote, simbolo):
+        return
+    ob_r = buscar_ob(df_4h, dir_rebote)
+    if not ob_r["valido"]:
+        return
+    if not en_ob(pc, ob_r, dir_rebote):
+        return
+    if not confirma_1h(df_1h, dir_rebote):
+        return
+    log.info(f"{simbolo} — REBOTE {dir_rebote.upper()} detectado en tendencia {t} — consultando IA...")
+    ia = filtro_ia_rebote(simbolo, pc, ob_r)
+    if not ia["entrar"]:
+        log.info(f"{simbolo} — REBOTE rechazado por IA ({ia['confianza']}%): {ia['razon']}")
+        return
+    log.info(f"{simbolo} — IA APRUEBA REBOTE {ia['confianza']}% — EJECUTANDO LONG")
+    abrir_rebote(simbolo, pc, ia)
 
 
 # ─── REPORTE ──────────────────────────────────────────────────────────────────
