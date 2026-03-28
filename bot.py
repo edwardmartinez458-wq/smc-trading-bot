@@ -1008,9 +1008,6 @@ def abrir(simbolo, t, pc, ia):
 
     cant = calcular_cantidad(simbolo, pc, capital_pct)
 
-    # Ajustar apalancamiento en KuCoin antes de abrir (modo ISOLATED)
-    kc_post("/api/v2/changeIsolatedUserLeverage", {"symbol": simbolo, "leverage": str(estado["apalancamiento"]), "side": "BOTH"})
-
     sl_oid = ejecutar_orden(simbolo, lado, cant, sl, tp)
     if not sl_oid:
         return
