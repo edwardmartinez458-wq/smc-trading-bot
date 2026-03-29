@@ -769,6 +769,7 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
 
     close_s  = "sell" if lado == "buy" else "buy"
     sl_oid   = f"sl_{int(time.time()*1000)}"
+    tp_oid   = f"tp_{int(time.time()*1000)+1}"
 
     kc_post("/api/v1/orders", {
         "clientOid":     sl_oid,
@@ -785,7 +786,7 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
     })
 
     kc_post("/api/v1/orders", {
-        "clientOid":     f"tp_{int(time.time()*1000)}",
+        "clientOid":     tp_oid,
         "symbol":        simbolo,
         "side":          close_s,
         "type":          "market",
@@ -797,7 +798,7 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "reduceOnly":    True,
         "marginMode":    "CROSSED",
     })
-    return sl_oid
+    return sl_oid, tp_oid
 
 def balance_kucoin() -> float:
     d = kc_get("/api/v1/account-overview", {"currency": "USDT"})
@@ -1010,11 +1011,13 @@ def abrir(simbolo, t, pc, ia):
     g_pot = riesgo_usdt * (TP_PCT / SL_PCT)  # Ganancia potencial proporcional
     p_pot = riesgo_usdt
 
-    cant = calcular_cantidad(simbolo, pc, capital_pct)
+    margen = round(estado["capital"] * capital_pct, 2)
+    cant   = calcular_cantidad(simbolo, pc, capital_pct)
 
-    sl_oid = ejecutar_orden(simbolo, lado, cant, sl, tp)
-    if not sl_oid:
+    resultado = ejecutar_orden(simbolo, lado, cant, sl, tp)
+    if not resultado:
         return
+    sl_oid, tp_oid = resultado
 
     with lock:
         estado["posiciones"].append({
@@ -1024,11 +1027,13 @@ def abrir(simbolo, t, pc, ia):
             "sl":           sl,
             "tp":           tp,
             "sl_oid":       sl_oid,
+            "tp_oid":       tp_oid,
             "cantidad":     cant,
-            "margen":       round(riesgo_usdt / SL_PCT, 2),
+            "margen":       margen,
             "g_pot":        round(g_pot, 2),
             "p_pot":        round(p_pot, 2),
             "confianza_ia": ia["confianza"],
+            "tipo":         "regular",
             "ts":           datetime.now().isoformat(),
         })
         estado["ops_total"] += 1
@@ -1094,15 +1099,20 @@ def _cerrar_posicion(p: dict, pc: float):
         if p not in estado["posiciones"]:
             return
         estado["posiciones"].remove(p)
-        if tp_ok:
-            pnl = p["g_pot"]
+
+        # Cancelar orden TP en KuCoin si cerramos por SL o tendencia
+        if not tp_ok and p.get("tp_oid"):
+            kc_delete(f"/api/v1/orders/{p['tp_oid']}")
+        # Cancelar orden SL en KuCoin si cerramos por TP
+        if tp_ok and p.get("sl_oid"):
+            kc_delete(f"/api/v1/orders/{p['sl_oid']}")
+
+        # PnL real siempre desde precio de cierre (robusto para todos los tipos)
+        margen = p.get("margen", estado["capital"] * p.get("capital_pct", 0.5))
+        if p["dir"] == "LONG":
+            pnl = round((pc - p["entrada"]) / p["entrada"] * margen, 2)
         else:
-            # PnL real basado en precio de cierre (funciona con trailing)
-            if p["dir"] == "LONG":
-                pnl = (pc - p["entrada"]) / p["entrada"] * p["margen"]
-            else:
-                pnl = (p["entrada"] - pc) / p["entrada"] * p["margen"]
-            pnl = round(pnl, 2)
+            pnl = round((p["entrada"] - pc) / p["entrada"] * margen, 2)
         estado["capital"] += pnl
         resultado = "TP" if tp_ok else "SL"
         if tp_ok:
@@ -1207,12 +1217,15 @@ def abrir_rebote(simbolo, pc, ia):
     """Abre un LONG de rebote con TP/SL conservadores."""
     sl  = round(pc * (1 - SL_REBOTE), 6)
     tp  = round(pc * (1 + TP_REBOTE), 6)
-    capital_pct = 0.40  # Siempre conservador en rebotes
+    capital_pct = 0.40
+    with lock:
+        margen = round(estado["capital"] * capital_pct, 2)
     cant = calcular_cantidad(simbolo, pc, capital_pct)
     log.info(f"{simbolo} [REBOTE] LONG | entrada ${pc:.4f} | TP ${tp:.4f} | SL ${sl:.4f} | capital 40%")
-    sl_oid = ejecutar_orden(simbolo, "buy", cant, sl, tp)
-    if not sl_oid:
+    resultado = ejecutar_orden(simbolo, "buy", cant, sl, tp)
+    if not resultado:
         return
+    sl_oid, tp_oid = resultado
     with lock:
         estado["posiciones"].append({
             "simbolo":      simbolo,
@@ -1221,9 +1234,14 @@ def abrir_rebote(simbolo, pc, ia):
             "sl":           sl,
             "tp":           tp,
             "sl_oid":       sl_oid,
+            "tp_oid":       tp_oid,
             "cantidad":     cant,
-            "capital_pct":  capital_pct,
+            "margen":       margen,
+            "g_pot":        round(margen * TP_REBOTE, 2),
+            "p_pot":        round(margen * SL_REBOTE, 2),
+            "confianza_ia": ia.get("confianza", 0),
             "tipo":         "rebote",
+            "ts":           datetime.now().isoformat(),
         })
         estado["ops_total"] += 1
     log.info(f"{simbolo} [REBOTE] posicion abierta | ops_total={estado['ops_total']}")
@@ -1318,12 +1336,15 @@ def abrir_breakout(simbolo, pc, ia):
     """Abre un LONG de breakout con TP/SL conservadores."""
     sl  = round(pc * (1 - SL_BREAKOUT), 6)
     tp  = round(pc * (1 + TP_BREAKOUT), 6)
-    capital_pct = 0.35  # Conservador — breakouts pueden ser fakeouts
+    capital_pct = 0.35
+    with lock:
+        margen = round(estado["capital"] * capital_pct, 2)
     cant = calcular_cantidad(simbolo, pc, capital_pct)
     log.info(f"{simbolo} [BREAKOUT] LONG | entrada ${pc:.4f} | TP ${tp:.4f} | SL ${sl:.4f} | capital 35%")
-    sl_oid = ejecutar_orden(simbolo, "buy", cant, sl, tp)
-    if not sl_oid:
+    resultado = ejecutar_orden(simbolo, "buy", cant, sl, tp)
+    if not resultado:
         return
+    sl_oid, tp_oid = resultado
     with lock:
         estado["posiciones"].append({
             "simbolo":      simbolo,
@@ -1332,9 +1353,14 @@ def abrir_breakout(simbolo, pc, ia):
             "sl":           sl,
             "tp":           tp,
             "sl_oid":       sl_oid,
+            "tp_oid":       tp_oid,
             "cantidad":     cant,
-            "capital_pct":  capital_pct,
+            "margen":       margen,
+            "g_pot":        round(margen * TP_BREAKOUT, 2),
+            "p_pot":        round(margen * SL_BREAKOUT, 2),
+            "confianza_ia": ia.get("confianza", 0),
             "tipo":         "breakout",
+            "ts":           datetime.now().isoformat(),
         })
         estado["ops_total"] += 1
     log.info(f"{simbolo} [BREAKOUT] posicion abierta | ops_total={estado['ops_total']}")
