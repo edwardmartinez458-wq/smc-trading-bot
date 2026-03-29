@@ -1695,6 +1695,38 @@ def api_historial():
         log.error(f"Historial API: {e}")
     return jsonify([])
 
+@app.route("/api/test_orden")
+def api_test_orden():
+    """Coloca una orden limite SHORT en SOL a precio imposible y la cancela — prueba sin riesgo."""
+    try:
+        pc = precio("SOLUSDTM")
+        if not pc:
+            return jsonify({"ok": False, "error": "Sin precio SOL"})
+
+        # Orden LIMIT a precio muy por encima del mercado (nunca se ejecuta)
+        precio_limite = round(pc * 1.50, 4)  # 50% por encima — imposible de tocar
+        oid = f"test_{int(time.time()*1000)}"
+
+        r = kc_post("/api/v1/orders", {
+            "clientOid": oid,
+            "symbol":    "SOLUSDTM",
+            "side":      "sell",
+            "type":      "limit",
+            "size":      1,
+            "price":     str(precio_limite),
+            "leverage":  "10",
+            "postOnly":  True,
+        })
+
+        if r and r.get("code") == "200000":
+            order_id = r.get("data", {}).get("orderId", oid)
+            kc_delete(f"/api/v1/orders/{order_id}")
+            return jsonify({"ok": True, "mensaje": f"Orden colocada y cancelada OK | precio_limite=${precio_limite} | id={order_id}"})
+        else:
+            return jsonify({"ok": False, "error": str(r)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
 @app.route("/api/limpiar_posiciones", methods=["POST"])
 def api_limpiar_posiciones():
     with lock:
