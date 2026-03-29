@@ -1899,20 +1899,22 @@ def api_estado():
     g_dia   = round(cap - cap_dia, 2)
     pct_dia = round(g_dia / cap_dia * 100, 2) if cap_dia else 0
 
-    # Calcular P&L en tiempo real para cada posicion
+    # Calcular P&L en tiempo real para cada posicion (con multiplicador real del contrato)
     pos_enriquecidas = []
     for p in pos:
         pc_actual = precio(p["simbolo"]) or p["entrada"]
         entrada   = p["entrada"]
         cantidad  = p.get("cantidad", 1)
+        mult      = obtener_multiplicador(p["simbolo"])
         if p["dir"] == "LONG":
-            pnl = round((pc_actual - entrada) * cantidad, 2)
+            pnl = round((pc_actual - entrada) * cantidad * mult, 2)
         else:
-            pnl = round((entrada - pc_actual) * cantidad, 2)
+            pnl = round((entrada - pc_actual) * cantidad * mult, 2)
+        margen = p.get("margen", 1) or 1
         p_enr = dict(p)
         p_enr["precio_actual"] = pc_actual
         p_enr["pnl"]           = pnl
-        p_enr["pnl_pct"]       = round(pnl / p.get("margen", 1) * 100, 2) if p.get("margen") else 0
+        p_enr["pnl_pct"]       = round(pnl / margen * 100, 2)
         pos_enriquecidas.append(p_enr)
 
     return jsonify({
