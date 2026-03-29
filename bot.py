@@ -1591,14 +1591,6 @@ def verificar_inicio():
 
     estado["pares_activos"] = pares_ok
 
-    # Configurar modo CROSSED para todos los pares antes de operar
-    log.info("Configurando margin mode CROSSED en KuCoin Futuros...")
-    for s in pares_ok:
-        r = kc_post("/api/v2/position/changeMarginType", {"symbol": s, "marginType": "CROSSED"})
-        if r and r.get("code") == "200000":
-            log.info(f"  {s} — margin mode CROSSED OK")
-        else:
-            log.warning(f"  {s} — no se pudo cambiar margin mode: {r}")
 
     if errores:
         msg = "ERROR AL INICIAR — Bot detenido\n\n" + "\n".join(errores)
