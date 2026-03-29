@@ -848,6 +848,65 @@ def guardar_historial(simbolo, dir_, entrada, salida, pnl, resultado, confianza_
     except Exception as e:
         log.error(f"Historial: {e}")
 
+
+def guardar_memoria_trade(p: dict, pc: float, resultado: str, pnl: float):
+    """Guarda en memoria el contexto completo del trade para que la IA aprenda."""
+    try:
+        path = "memoria_trades.json"
+        memoria = []
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                memoria = json.load(f)
+        with lock:
+            t_btc = estado.get("tendencia_btc", "desconocida")
+        memoria.append({
+            "fecha":         datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "simbolo":       p["simbolo"],
+            "tipo":          p.get("tipo", "regular"),
+            "direccion":     p["dir"],
+            "entrada":       round(p["entrada"], 6),
+            "salida":        round(pc, 6),
+            "tendencia_btc": t_btc,
+            "confianza_ia":  p.get("confianza_ia", 0),
+            "resultado":     resultado,
+            "pnl_usdt":      round(pnl, 2),
+            "leccion":       f"{'GANO' if pnl > 0 else 'PERDIO'} {abs(pnl):.2f} USDT en {resultado}",
+        })
+        # Guardar solo los ultimos 200 trades
+        memoria = memoria[-200:]
+        with open(path, "w") as f:
+            json.dump(memoria, f, indent=2)
+    except Exception as e:
+        log.error(f"Memoria trades: {e}")
+
+
+def leer_memoria_trades(simbolo: str, n: int = 5) -> str:
+    """Lee los ultimos N trades del simbolo para dar contexto a la IA."""
+    try:
+        path = "memoria_trades.json"
+        if not os.path.exists(path):
+            return ""
+        with open(path, "r") as f:
+            memoria = json.load(f)
+        trades_par = [t for t in memoria if t["simbolo"] == simbolo]
+        if not trades_par:
+            return ""
+        ultimos = trades_par[-n:]
+        lineas = [f"HISTORIAL {simbolo} (ultimos {len(ultimos)} trades):"]
+        for t in ultimos:
+            signo = "+" if t["pnl_usdt"] >= 0 else ""
+            lineas.append(
+                f"  {t['fecha']} | {t['tipo'].upper()} {t['direccion']} @ ${t['entrada']} "
+                f"→ {t['resultado']} {signo}${t['pnl_usdt']} USDT | IA {t['confianza_ia']}%"
+            )
+        ganados = sum(1 for t in trades_par if t["pnl_usdt"] > 0)
+        total = len(trades_par)
+        lineas.append(f"  Win rate historico: {ganados}/{total} ({ganados*100//total if total else 0}%)")
+        return "\n".join(lineas)
+    except Exception as e:
+        log.error(f"Leer memoria: {e}")
+        return ""
+
 # ─── SMC ──────────────────────────────────────────────────────────────────────
 
 def tendencia(df: pd.DataFrame) -> str:
@@ -943,6 +1002,8 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
     if trump_activa and trump_texto:
         trump_contexto = f"\nALERTA TRUMP ACTIVA: Post reciente dice '{trump_texto[:150]}' → impacto estimado {trump_dir}"
 
+    memoria_contexto = leer_memoria_trades(simbolo)
+
     for intento in range(3):
         try:
             r = ai.messages.create(
@@ -957,6 +1018,7 @@ Order Block: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}
 Toques trendline: {toques} | Direccion: {'LONG' if t == 'alcista' else 'SHORT'}
 Hora Chile: {hora_chile()}h
 {trump_contexto}
+{memoria_contexto}
 
 ANALIZA:
 1. Mes {datetime.now().month} historicamente favorable en crypto?
@@ -964,7 +1026,7 @@ ANALIZA:
 3. La tendencia BTC apoya la entrada?
 4. Hay riesgos macro relevantes esta semana?
 5. La alerta Trump (si existe) apoya o contradice la entrada?
-6. Hay razones claras para NO entrar?
+6. El historial de trades previos apoya o desaconseja esta entrada?
 
 RESPONDE EXACTAMENTE (sin texto extra):
 DECISION: ENTRAR o NO_ENTRAR
@@ -1125,6 +1187,7 @@ def _cerrar_posicion(p: dict, pc: float):
 
     guardar_historial(p["simbolo"], p["dir"], p["entrada"], pc,
                       pnl, resultado, p.get("confianza_ia", 0))
+    guardar_memoria_trade(p, pc, resultado, pnl)
 
     wr = ops_g / ops_t * 100 if ops_t else 0
     signo = "+" if pnl > 0 else ""
@@ -1173,6 +1236,7 @@ def monitor_posiciones():
 
 def filtro_ia_rebote(simbolo, pc, ob) -> dict:
     """IA evalua si hay rebote alcista valido dentro de tendencia bajista."""
+    memoria_contexto = leer_memoria_trades(simbolo)
     for intento in range(3):
         try:
             r = ai.messages.create(
@@ -1187,8 +1251,10 @@ Order Block alcista en: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}
 BOS alcista confirmado en 15min. 2+ velas alcistas de confirmacion.
 Objetivo LONG conservador: +5% | Stop loss: -3%
 
+{memoria_contexto}
+
 EVALUA si este rebote tiene probabilidad real de alcanzar +5% antes de ser absorbido por la tendencia bajista.
-Considera: soporte tecnico, fuerza del rebote, contexto de mercado.
+Considera: soporte tecnico, fuerza del rebote, historial previo de este par.
 
 RESPONDE EXACTAMENTE (sin texto extra):
 DECISION: ENTRAR o NO_ENTRAR
@@ -1292,6 +1358,7 @@ def detectar_breakout(simbolo: str, pc: float) -> dict:
 
 def filtro_ia_breakout(simbolo, pc, bk) -> dict:
     """IA evalua si el breakout tiene continuacion."""
+    memoria_contexto = leer_memoria_trades(simbolo)
     for intento in range(3):
         try:
             r = ai.messages.create(
@@ -1306,8 +1373,10 @@ Volumen de rotura: {bk['vol_ratio']}x el promedio (minimo esperado: 2x)
 MA7 > MA25 en 1H: {'SI' if bk['ma_ok'] else 'NO'}
 Objetivo LONG: +5% | Stop loss: -2.5%
 
+{memoria_contexto}
+
 EVALUA si este breakout tiene momentum suficiente para continuar +5% sin pullback profundo.
-Considera: fuerza del volumen, contexto macro, probabilidad de fakeout.
+Considera: fuerza del volumen, contexto macro, historial previo de este par, probabilidad de fakeout.
 
 RESPONDE EXACTAMENTE (sin texto extra):
 DECISION: ENTRAR o NO_ENTRAR
