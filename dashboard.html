@@ -312,12 +312,14 @@
       <div class="stat-label">Ganadas</div>
       <div class="stat-val green" id="wins">—</div>
       <div class="stat-sub" id="wr-label">Win rate</div>
+      <div class="stat-sub green" id="pnl-ganadas" style="color:var(--accent);margin-top:2px">+$0.00</div>
       <div class="wr-bar"><div class="wr-fill" id="wr-fill" style="width:0%"></div></div>
     </div>
     <div class="stat red">
       <div class="stat-label">Perdidas</div>
       <div class="stat-val red" id="losses">—</div>
       <div class="stat-sub" id="pnl-hist">P&L total</div>
+      <div class="stat-sub" id="pnl-perdidas" style="color:var(--red);margin-top:2px">-$0.00</div>
     </div>
     <div class="stat">
       <div class="stat-label">Ciclo</div>
@@ -499,13 +501,17 @@
       const losses = hist.filter(h => parseFloat(h.pnl||0) < 0).length;
       const total  = hist.length;
       const wr     = total ? Math.round(wins/total*100) : 0;
-      const pnlSum = hist.reduce((a,h) => a + parseFloat(h.pnl||0), 0);
+      const pnlSum     = hist.reduce((a,h) => a + parseFloat(h.pnl||0), 0);
+      const pnlGanadas = hist.filter(h => parseFloat(h.pnl||0) > 0).reduce((a,h) => a + parseFloat(h.pnl||0), 0);
+      const pnlPerdidas = hist.filter(h => parseFloat(h.pnl||0) < 0).reduce((a,h) => a + parseFloat(h.pnl||0), 0);
 
       document.getElementById('wins').textContent    = wins;
       document.getElementById('losses').textContent  = losses;
       document.getElementById('wr-label').textContent = `Win rate ${wr}%`;
       document.getElementById('wr-fill').style.width  = wr + '%';
       document.getElementById('pnl-hist').textContent = (pnlSum>=0?'+':'') + '$' + fmt(pnlSum);
+      document.getElementById('pnl-ganadas').textContent  = '+$' + fmt(pnlGanadas);
+      document.getElementById('pnl-perdidas').textContent = '-$' + fmt(Math.abs(pnlPerdidas));
 
       el.innerHTML = hist.slice(-20).reverse().map(h => {
         const pnl = parseFloat(h.pnl||0);
