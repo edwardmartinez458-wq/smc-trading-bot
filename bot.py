@@ -1034,6 +1034,68 @@ def contar_toques(df: pd.DataFrame, ob: dict, t: str) -> int:
         i += 1
     return toques
 
+def calcular_atr(df: pd.DataFrame, periodo: int = 14) -> float:
+    """ATR (Average True Range) — mide la volatilidad real del mercado."""
+    if len(df) < periodo + 1: return 0.0
+    h = df["high"].values
+    l = df["low"].values
+    c = df["close"].values
+    trs = [max(h[i]-l[i], abs(h[i]-c[i-1]), abs(l[i]-c[i-1])) for i in range(1, len(c))]
+    return sum(trs[-periodo:]) / periodo
+
+def calcular_rsi(df: pd.DataFrame, periodo: int = 14) -> float:
+    """RSI — detecta sobrecompra/sobreventa."""
+    if len(df) < periodo + 1: return 50.0
+    c = df["close"].values
+    deltas = [c[i] - c[i-1] for i in range(1, len(c))]
+    ganancias = [d if d > 0 else 0 for d in deltas[-periodo:]]
+    perdidas  = [-d if d < 0 else 0 for d in deltas[-periodo:]]
+    ag = sum(ganancias) / periodo
+    ap = sum(perdidas) / periodo
+    if ap == 0: return 100.0
+    rs = ag / ap
+    return round(100 - (100 / (1 + rs)), 2)
+
+def hay_divergencia_rsi(df: pd.DataFrame, t: str) -> bool:
+    """Detecta divergencia RSI: precio hace nuevo extremo pero RSI no lo confirma."""
+    if len(df) < 30: return False
+    mitad = len(df) // 2
+    rsi_rec = calcular_rsi(df.iloc[mitad:])
+    rsi_ant = calcular_rsi(df.iloc[:mitad])
+    pc_rec  = df["close"].values[-1]
+    pc_ant  = df["close"].values[mitad]
+    if t == "alcista":
+        # Precio sube pero RSI baja = agotamiento alcista (divergencia bajista)
+        return pc_rec > pc_ant and rsi_rec < rsi_ant - 5
+    if t == "bajista":
+        # Precio baja pero RSI sube = agotamiento bajista (divergencia alcista)
+        return pc_rec < pc_ant and rsi_rec > rsi_ant + 5
+    return False
+
+def buscar_fvg(df: pd.DataFrame, t: str) -> dict:
+    """Fair Value Gap: zona de desequilibrio entre 3 velas consecutivas."""
+    empty = {"zona_alta": 0, "zona_baja": 0, "valido": False}
+    if len(df) < 10: return empty
+    for i in range(len(df) - 3, max(len(df) - 20, 0), -1):
+        v1, v2, v3 = df.iloc[i], df.iloc[i+1], df.iloc[i+2]
+        if t == "alcista":
+            # FVG alcista: low de v3 > high de v1 (hueco entre v1 y v3)
+            if v3["low"] > v1["high"] and v2["close"] > v2["open"]:
+                return {"zona_alta": v3["low"], "zona_baja": v1["high"], "valido": True}
+        if t == "bajista":
+            # FVG bajista: high de v3 < low de v1 (hueco entre v1 y v3)
+            if v3["high"] < v1["low"] and v2["close"] < v2["open"]:
+                return {"zona_alta": v1["low"], "zona_baja": v3["high"], "valido": True}
+    return empty
+
+def sesion_activa() -> str:
+    """Retorna la sesion de mercado activa: Asia, Londres, NY, o fuera."""
+    hora_utc = datetime.now(timezone.utc).hour
+    if 0 <= hora_utc < 8:   return "Asia"
+    if 8 <= hora_utc < 13:  return "Londres"
+    if 13 <= hora_utc < 22: return "NY"
+    return "fuera"
+
 def confirma_1h(df: pd.DataFrame, t: str) -> bool:
     # Confirmacion: 2 de las ultimas 3 velas de 15min en la misma direccion
     if len(df) < 4: return False
@@ -1062,6 +1124,8 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
     memoria_contexto  = leer_memoria_trades(simbolo)
     fear_greed        = obtener_fear_greed()
     funding           = obtener_funding_rate(simbolo)
+    rsi_actual        = calcular_rsi(velas(simbolo, "240", 30) if True else pd.DataFrame())
+    sesion            = sesion_activa()
 
     for intento in range(3):
         try:
@@ -1076,6 +1140,7 @@ Par: {simbolo} | Fecha: {datetime.now().strftime('%Y-%m-%d %A')} | Mes: {datetim
 Tendencia Daily: {t} | Tendencia BTC: {t_btc} | Precio: ${pc:.4f}
 Order Block: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}
 Direccion: {'LONG' if t == 'alcista' else 'SHORT'} | Hora Chile: {hora_chile()}h
+Sesion activa: {sesion} | RSI 4H: {rsi_actual}
 {fear_greed}
 {funding}
 {trump_contexto}
@@ -1085,7 +1150,7 @@ ANALIZA:
 1. El Fear & Greed apoya o contradice la entrada?
 2. El Funding Rate indica posicionamiento extremo que pueda revertirse?
 3. La tendencia BTC apoya la entrada?
-4. Hay riesgos macro relevantes esta semana?
+4. El RSI indica sobrecompra/sobreventa extrema que contradiga la entrada?
 5. La alerta Trump (si existe) apoya o contradice la entrada?
 6. El historial de trades previos apoya o desaconseja esta entrada?
 
@@ -1122,8 +1187,16 @@ def abrir(simbolo, t, pc, ia):
     lev    = estado["apalancamiento"]
     lado   = "buy" if t == "alcista" else "sell"
     dir_   = "LONG" if lado == "buy" else "SHORT"
-    sl     = round(pc * (1 - SL_PCT) if lado == "buy" else pc * (1 + SL_PCT), 6)
-    tp     = round(pc * (1 + TP_PCT) if lado == "buy" else pc * (1 - TP_PCT), 6)
+
+    # SL basado en ATR (volatilidad real) — 2x ATR del 4H
+    df_4h_sl = velas(simbolo, "240", 30)
+    atr_val  = calcular_atr(df_4h_sl) if not df_4h_sl.empty else 0
+    sl_dist  = max(atr_val * 2, pc * 0.03)  # minimo 3% si ATR es muy pequeno
+    sl_pct   = sl_dist / pc
+    tp_dist  = sl_dist * (TP_PCT / SL_PCT)  # mantiene ratio TP/SL original
+    sl = round(pc - sl_dist if lado == "buy" else pc + sl_dist, 6)
+    tp = round(pc + tp_dist if lado == "buy" else pc - tp_dist, 6)
+    log.info(f"{simbolo} — ATR {atr_val:.4f} → SL dist {sl_dist:.4f} ({sl_pct*100:.2f}%) | TP {tp_dist:.4f}")
 
     # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 55)
@@ -1133,9 +1206,9 @@ def abrir(simbolo, t, pc, ia):
         capital_pct = 0.65  # 65%
     else:
         capital_pct = 0.35  # 35% — minimo
-    riesgo_usdt = estado["capital"] * capital_pct * SL_PCT
+    riesgo_usdt = estado["capital"] * capital_pct * sl_pct
     log.info(f"{simbolo} — confianza {confianza}% → capital {capital_pct*100:.0f}% | riesgo max ${riesgo_usdt:.2f}")
-    g_pot = riesgo_usdt * (TP_PCT / SL_PCT)  # Ganancia potencial proporcional
+    g_pot = riesgo_usdt * (TP_PCT / SL_PCT)
     p_pot = riesgo_usdt
 
     margen = round(estado["capital"] * capital_pct, 2)
@@ -1503,11 +1576,25 @@ def abrir_breakout(simbolo, pc, ia):
 
 def _trade_tendencia(simbolo, t, pc, df_4h, df_1h):
     """Trade en la direccion de la tendencia diaria (flujo original)."""
+    # Filtro sesion: solo operar en Londres o NY (mayor liquidez)
+    sesion = sesion_activa()
+    if sesion == "fuera":
+        log.info(f"{simbolo} — RECHAZADO: fuera de sesion activa (UTC {datetime.now(timezone.utc).hour}h)")
+        return
+    log.info(f"{simbolo} — sesion {sesion} OK")
+
     adx = calcular_adx(df_4h)
     if adx < 20:
         log.info(f"{simbolo} — RECHAZADO: ADX {adx} < 20 (mercado sin tendencia real)")
         return
     log.info(f"{simbolo} — ADX {adx} OK")
+
+    # Divergencia RSI: si hay agotamiento, no entrar
+    if hay_divergencia_rsi(df_4h, t):
+        log.info(f"{simbolo} — RECHAZADO: divergencia RSI detectada (agotamiento de tendencia)")
+        return
+    rsi_val = calcular_rsi(df_4h)
+    log.info(f"{simbolo} — RSI {rsi_val} sin divergencia OK")
 
     if not hay_bos(df_4h, t, simbolo):
         log.info(f"{simbolo} — RECHAZADO: sin BOS en 15min/4H")
@@ -1529,6 +1616,11 @@ def _trade_tendencia(simbolo, t, pc, df_4h, df_1h):
         log.info(f"{simbolo} — RECHAZADO: precio fuera del OB (pc=${pc:.4f}, OB=${ob['zona_baja']:.4f}-${ob['zona_alta']:.4f})")
         return
     log.info(f"{simbolo} — precio EN el OB OK")
+
+    # FVG como confluencia (no bloquea, pero suma confianza al log)
+    fvg = buscar_fvg(df_4h, t)
+    if fvg["valido"]:
+        log.info(f"{simbolo} — FVG detectado: ${fvg['zona_baja']:.4f} - ${fvg['zona_alta']:.4f} (confluencia extra)")
 
     if not confirma_1h(df_1h, t):
         log.info(f"{simbolo} — RECHAZADO: sin confirmacion 1H")
