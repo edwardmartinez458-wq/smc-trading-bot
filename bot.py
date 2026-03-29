@@ -1468,22 +1468,36 @@ def _sincronizar_con_kucoin():
             simbolo = pk.get("symbol", "")
             if simbolo in simbolos_bot:
                 continue
-            qty    = float(pk.get("currentQty", 0))
-            dir_   = "LONG" if qty > 0 else "SHORT"
+            qty     = float(pk.get("currentQty", 0))
+            dir_    = "LONG" if qty > 0 else "SHORT"
             entrada = float(pk.get("avgEntryPrice", 0))
             margen  = abs(float(pk.get("posMargin", 0)))
+            # Leer SL/TP reales desde las ordenes activas en KuCoin
             sl = round(entrada * (1 - SL_PCT) if dir_ == "LONG" else entrada * (1 + SL_PCT), 6)
             tp = round(entrada * (1 + TP_PCT) if dir_ == "LONG" else entrada * (1 - TP_PCT), 6)
+            sl_oid, tp_oid = None, None
+            try:
+                ords = kc_get("/api/v1/stopOrders", {"symbol": simbolo, "status": "active"})
+                for o in (ords.get("data", {}).get("items") or []):
+                    sp = float(o.get("stopPrice", 0))
+                    oid = o.get("clientOid", o.get("id", ""))
+                    stop = o.get("stop", "")
+                    if "sl_" in oid or (stop == "down" and dir_ == "LONG") or (stop == "up" and dir_ == "SHORT"):
+                        sl = sp; sl_oid = oid
+                    elif "tp_" in oid or (stop == "up" and dir_ == "LONG") or (stop == "down" and dir_ == "SHORT"):
+                        tp = sp; tp_oid = oid
+            except Exception:
+                pass
             with lock:
                 estado["posiciones"].append({
                     "simbolo": simbolo, "dir": dir_, "entrada": entrada,
-                    "sl": sl, "tp": tp, "sl_oid": None, "tp_oid": None,
+                    "sl": sl, "tp": tp, "sl_oid": sl_oid, "tp_oid": tp_oid,
                     "cantidad": abs(int(qty)), "margen": round(margen, 2),
                     "g_pot": 0, "p_pot": 0, "confianza_ia": 0,
                     "tipo": "recuperada", "ts": datetime.now().isoformat(),
                 })
-            log.warning(f"Sync: POSICION RECUPERADA {simbolo} {dir_} entrada=${entrada:.4f}")
-            tg(f"POSICION RECUPERADA: {simbolo} {dir_} @ ${entrada:.4f}")
+            log.warning(f"Sync: POSICION RECUPERADA {simbolo} {dir_} entrada=${entrada:.4f} sl=${sl} tp=${tp}")
+            tg(f"POSICION RECUPERADA: {simbolo} {dir_} @ ${entrada:.4f} | SL ${sl} | TP ${tp}")
 
     except Exception as e:
         log.error(f"Sincronizacion KuCoin: {e}")
