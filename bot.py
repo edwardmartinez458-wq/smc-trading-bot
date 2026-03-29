@@ -19,7 +19,7 @@ import os, time, logging, requests, hmac, hashlib, json, threading, base64, rand
 import pandas as pd
 from datetime import datetime, timezone
 from logging.handlers import TimedRotatingFileHandler
-from anthropic import Anthropic
+from openai import OpenAI
 from flask import Flask, jsonify, send_from_directory
 from dotenv import load_dotenv
 load_dotenv()
@@ -31,7 +31,7 @@ KC_SECRET      = os.getenv("KUCOIN_SECRET")
 KC_PASSPHRASE  = os.getenv("KUCOIN_PASSPHRASE")
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+DEEPSEEK_API_KEY  = os.getenv("DEEPSEEK_API_KEY")
 
 # Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
@@ -82,7 +82,7 @@ fh = TimedRotatingFileHandler("logs/bot.log", when="midnight", backupCount=7)
 fh.setFormatter(fmt)
 log.addHandler(fh)
 
-ai = Anthropic(api_key=ANTHROPIC_API_KEY)
+ai = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
 estado = {
     "posiciones":        [],
@@ -364,8 +364,8 @@ def es_relevante_para_crypto(texto: str) -> bool:
 
 def analizar_trump_ia(texto: str) -> dict:
     try:
-        r = ai.messages.create(
-            model="claude-sonnet-4-6",
+        r = ai.chat.completions.create(
+            model="deepseek-chat",
             max_tokens=200,
             messages=[{"role": "user", "content": f"""Eres un analista de mercados crypto. Trump publico esto en Truth Social:
 
@@ -379,7 +379,7 @@ CONFIANZA: 0-100
 URGENCIA: ALTA o MEDIA o BAJA
 RAZON: una linea breve explicando el impacto"""}]
         )
-        respuesta = r.content[0].text.strip()
+        respuesta = r.choices[0].message.content.strip()
         impacto, confianza, urgencia, razon = "NEUTRAL", 0, "BAJA", "Sin analisis"
         for l in respuesta.split("\n"):
             if "IMPACTO:" in l:
@@ -1135,10 +1135,9 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
 
     for intento in range(3):
         try:
-            r = ai.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=8000,
-                thinking={"type": "enabled", "budget_tokens": 6000},
+            r = ai.chat.completions.create(
+                model="deepseek-chat",
+                max_tokens=300,
                 messages=[{"role": "user", "content": f"""Eres el filtro de riesgo de un bot SMC. Decide si entrar o no.
 
 SENAL:
@@ -1165,11 +1164,7 @@ DECISION: ENTRAR o NO_ENTRAR
 CONFIANZA: 0-100
 RAZON: una linea breve"""}]
             )
-            texto = ""
-            for block in r.content:
-                if block.type == "text":
-                    texto = block.text.strip()
-                    break
+            texto = r.choices[0].message.content.strip()
             dec, conf, razon = "NO_ENTRAR", 0, "Sin respuesta"
             for l in texto.split("\n"):
                 if "DECISION:" in l: dec = "ENTRAR" if "ENTRAR" in l else "NO_ENTRAR"
@@ -1528,8 +1523,8 @@ def filtro_ia_rebote(simbolo, pc, ob) -> dict:
     memoria_contexto = leer_memoria_trades(simbolo)
     for intento in range(3):
         try:
-            r = ai.messages.create(
-                model="claude-sonnet-4-6",
+            r = ai.chat.completions.create(
+                model="deepseek-chat",
                 max_tokens=150,
                 messages=[{"role": "user", "content":
                     f"""Eres un trader SMC experto.
@@ -1550,7 +1545,7 @@ DECISION: ENTRAR o NO_ENTRAR
 CONFIANZA: 0-100
 RAZON: una linea breve"""}]
             )
-            texto = r.content[0].text.strip()
+            texto = r.choices[0].message.content.strip()
             dec, conf, razon = "NO_ENTRAR", 0, "Sin respuesta"
             for l in texto.split("\n"):
                 if "DECISION:" in l: dec = "ENTRAR" if "ENTRAR" in l else "NO_ENTRAR"
@@ -1650,8 +1645,8 @@ def filtro_ia_breakout(simbolo, pc, bk) -> dict:
     memoria_contexto = leer_memoria_trades(simbolo)
     for intento in range(3):
         try:
-            r = ai.messages.create(
-                model="claude-sonnet-4-6",
+            r = ai.chat.completions.create(
+                model="deepseek-chat",
                 max_tokens=150,
                 messages=[{"role": "user", "content":
                     f"""Eres un trader experto en breakouts con volumen.
@@ -1672,7 +1667,7 @@ DECISION: ENTRAR o NO_ENTRAR
 CONFIANZA: 0-100
 RAZON: una linea breve"""}]
             )
-            texto = r.content[0].text.strip()
+            texto = r.choices[0].message.content.strip()
             dec, conf, razon = "NO_ENTRAR", 0, "Sin respuesta"
             for l in texto.split("\n"):
                 if "DECISION:" in l: dec = "ENTRAR" if "ENTRAR" in l else "NO_ENTRAR"
