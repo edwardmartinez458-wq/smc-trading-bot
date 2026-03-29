@@ -1576,25 +1576,11 @@ def abrir_breakout(simbolo, pc, ia):
 
 def _trade_tendencia(simbolo, t, pc, df_4h, df_1h):
     """Trade en la direccion de la tendencia diaria (flujo original)."""
-    # Filtro sesion: solo operar en Londres o NY (mayor liquidez)
-    sesion = sesion_activa()
-    if sesion == "fuera":
-        log.info(f"{simbolo} — RECHAZADO: fuera de sesion activa (UTC {datetime.now(timezone.utc).hour}h)")
-        return
-    log.info(f"{simbolo} — sesion {sesion} OK")
-
     adx = calcular_adx(df_4h)
     if adx < 20:
         log.info(f"{simbolo} — RECHAZADO: ADX {adx} < 20 (mercado sin tendencia real)")
         return
     log.info(f"{simbolo} — ADX {adx} OK")
-
-    # Divergencia RSI: si hay agotamiento, no entrar
-    if hay_divergencia_rsi(df_4h, t):
-        log.info(f"{simbolo} — RECHAZADO: divergencia RSI detectada (agotamiento de tendencia)")
-        return
-    rsi_val = calcular_rsi(df_4h)
-    log.info(f"{simbolo} — RSI {rsi_val} sin divergencia OK")
 
     if not hay_bos(df_4h, t, simbolo):
         log.info(f"{simbolo} — RECHAZADO: sin BOS en 15min/4H")
