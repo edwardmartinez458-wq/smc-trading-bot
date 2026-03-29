@@ -439,7 +439,7 @@
               </div>
               <span style="font-family:'Space Mono',monospace;font-size:0.6rem;color:var(--muted)">IA ${p.confianza_ia||'—'}%</span>
             </div>
-            <div class="pos-pnl ${pnlCls}">${pnlSign}$${fmt(pnl)} <span style="font-size:0.75rem">${pnlSign}${pnlPct}%</span></div>
+            <div class="pos-pnl ${pnlCls}">${pnlSign}$${fmt(pnl)} <span style="font-size:0.75rem">${pnlSign}${fmt(p.pnl_pct||0,2)}%</span></div>
             <div class="pos-details">
               <div>Entrada</div><div><span>$${fmt(p.entrada,4)}</span></div>
               <div>TP</div><div><span style="color:var(--accent)">$${fmt(p.tp,4)}</span></div>

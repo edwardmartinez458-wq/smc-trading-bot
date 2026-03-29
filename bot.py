@@ -824,9 +824,13 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
     return sl_oid, tp_oid
 
 def balance_kucoin() -> float:
+    """Retorna el equity total de la cuenta (disponible + margen en uso)."""
     d = kc_get("/api/v1/account-overview", {"currency": "USDT"})
     try:
-        return float(d["data"]["availableBalance"])
+        data = d["data"]
+        # accountEquity = saldo disponible + margen usado + PnL no realizado
+        equity = float(data.get("accountEquity", data.get("availableBalance", 0)))
+        return equity
     except:
         return 0.0
 
@@ -1895,6 +1899,22 @@ def api_estado():
     g_dia   = round(cap - cap_dia, 2)
     pct_dia = round(g_dia / cap_dia * 100, 2) if cap_dia else 0
 
+    # Calcular P&L en tiempo real para cada posicion
+    pos_enriquecidas = []
+    for p in pos:
+        pc_actual = precio(p["simbolo"]) or p["entrada"]
+        entrada   = p["entrada"]
+        cantidad  = p.get("cantidad", 1)
+        if p["dir"] == "LONG":
+            pnl = round((pc_actual - entrada) * cantidad, 2)
+        else:
+            pnl = round((entrada - pc_actual) * cantidad, 2)
+        p_enr = dict(p)
+        p_enr["precio_actual"] = pc_actual
+        p_enr["pnl"]           = pnl
+        p_enr["pnl_pct"]       = round(pnl / p.get("margen", 1) * 100, 2) if p.get("margen") else 0
+        pos_enriquecidas.append(p_enr)
+
     return jsonify({
         "capital":           round(cap, 2),
         "capital_inicial":   cap_ini,
@@ -1911,7 +1931,7 @@ def api_estado():
         "pausado":           cb,
         "perdidas_seguidas": perdidas,
         "pares_activos":     pares,
-        "posiciones":        pos,
+        "posiciones":        pos_enriquecidas,
         "trump_texto":       trump_t[:150] if trump_t else "",
         "trump_direccion":   trump_d,
         "trump_alerta":      trump_a,
