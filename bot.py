@@ -1704,7 +1704,7 @@ def api_test_orden():
             return jsonify({"ok": False, "error": "Sin precio SOL"})
 
         # Orden LIMIT a precio muy por encima del mercado (nunca se ejecuta)
-        precio_limite = round(pc * 1.50, 4)  # 50% por encima — imposible de tocar
+        precio_limite = round(pc * 1.50, 3)  # 50% por encima — imposible de tocar
         oid = f"test_{int(time.time()*1000)}"
 
         r = kc_post("/api/v1/orders", {
