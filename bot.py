@@ -54,7 +54,7 @@ CB_LIMITE      = 5
 BASE_URL       = "https://api-futures.kucoin.com"
 
 # Stop loss global diario: si el capital cae mas de 10% en el dia -> pausar
-SL_DIARIO_PCT  = 0.30  # 30% diario — compatible con SL 10% por trade
+SL_DIARIO_PCT  = 0.15  # 15% diario — proteccion real de capital
 
 # Ciclo aleatorio entre 5 y 15 minutos
 CICLO_MIN_SEG  = 5 * 60
@@ -917,6 +917,39 @@ def tendencia(df: pd.DataFrame) -> str:
     if c[-1] < ma20 * 0.998: return "bajista"
     return "lateral"
 
+def calcular_adx(df: pd.DataFrame, periodo: int = 14) -> float:
+    """Calcula el ADX (Average Directional Index). >25 = tendencia fuerte."""
+    if len(df) < periodo * 2: return 0.0
+    h = df["high"].values
+    l = df["low"].values
+    c = df["close"].values
+    tr_list, pdm_list, ndm_list = [], [], []
+    for i in range(1, len(c)):
+        tr  = max(h[i] - l[i], abs(h[i] - c[i-1]), abs(l[i] - c[i-1]))
+        pdm = max(h[i] - h[i-1], 0) if (h[i] - h[i-1]) > (l[i-1] - l[i]) else 0
+        ndm = max(l[i-1] - l[i], 0) if (l[i-1] - l[i]) > (h[i] - h[i-1]) else 0
+        tr_list.append(tr); pdm_list.append(pdm); ndm_list.append(ndm)
+    def wilder(arr, n):
+        s = sum(arr[:n])
+        result = [s]
+        for v in arr[n:]:
+            s = s - s/n + v
+            result.append(s)
+        return result
+    atr  = wilder(tr_list, periodo)
+    apdi = wilder(pdm_list, periodo)
+    andi = wilder(ndm_list, periodo)
+    dx_list = []
+    for i in range(len(atr)):
+        pdi = 100 * apdi[i] / atr[i] if atr[i] > 0 else 0
+        ndi = 100 * andi[i] / atr[i] if atr[i] > 0 else 0
+        dx  = 100 * abs(pdi - ndi) / (pdi + ndi) if (pdi + ndi) > 0 else 0
+        dx_list.append(dx)
+    if len(dx_list) < periodo: return 0.0
+    adx = sum(dx_list[-periodo:]) / periodo
+    return round(adx, 2)
+
+
 def hay_bos(df4h: pd.DataFrame, t: str, simbolo: str = "") -> bool:
     # BOS: 2 velas consecutivas de 15min en la misma direccion
     try:
@@ -1437,6 +1470,12 @@ def abrir_breakout(simbolo, pc, ia):
 
 def _trade_tendencia(simbolo, t, pc, df_4h, df_1h):
     """Trade en la direccion de la tendencia diaria (flujo original)."""
+    adx = calcular_adx(df_4h)
+    if adx < 20:
+        log.info(f"{simbolo} — RECHAZADO: ADX {adx} < 20 (mercado sin tendencia real)")
+        return
+    log.info(f"{simbolo} — ADX {adx} OK")
+
     if not hay_bos(df_4h, t, simbolo):
         log.info(f"{simbolo} — RECHAZADO: sin BOS en 15min/4H")
         return
