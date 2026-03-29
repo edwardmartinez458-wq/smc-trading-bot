@@ -942,7 +942,7 @@ def hay_bos(df4h: pd.DataFrame, t: str, simbolo: str = "") -> bool:
 def buscar_ob(df: pd.DataFrame, t: str) -> dict:
     empty = {"zona_alta": 0, "zona_baja": 0, "valido": False}
     if len(df) < 30: return empty
-    for i in range(len(df) - 5, max(len(df) - 25, 0), -1):
+    for i in range(len(df) - 5, max(len(df) - 45, 0), -1):
         v, s = df.iloc[i], df.iloc[i+1]
         if t == "alcista" and v["close"] < v["open"] and (s["close"]-s["open"]) > s["open"]*0.002:
             return {"zona_alta": v["open"], "zona_baja": v["close"], "valido": True}
@@ -1458,19 +1458,13 @@ def _trade_tendencia(simbolo, t, pc, df_4h, df_1h):
         return
     log.info(f"{simbolo} — precio EN el OB OK")
 
-    tk = contar_toques(df_4h, ob, t)
-    log.info(f"{simbolo} — toques en OB: {tk}/3")
-    if tk < 1:
-        log.info(f"{simbolo} — RECHAZADO: solo {tk} toques (necesita 1)")
-        return
-
     if not confirma_1h(df_1h, t):
         log.info(f"{simbolo} — RECHAZADO: sin confirmacion 1H")
         return
     log.info(f"{simbolo} — confirmacion 1H OK")
 
-    log.info(f"{simbolo} — 5/5 FILTROS PASADOS — consultando IA...")
-    ia = filtro_ia(simbolo, t, pc, ob, tk)
+    log.info(f"{simbolo} — 4/4 FILTROS PASADOS — consultando IA...")
+    ia = filtro_ia(simbolo, t, pc, ob, 0)
 
     if not ia["entrar"]:
         log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
@@ -1497,7 +1491,7 @@ def analizar(simbolo: str):
         return
 
     df_d  = velas(simbolo, "1440", 50)
-    df_4h = velas(simbolo, "240",  100)
+    df_4h = velas(simbolo, "240",  200)
     df_1h = velas(simbolo, "5",    10)
     if df_d.empty or df_4h.empty or df_1h.empty:
         log.info(f"{simbolo} — sin datos de velas")
