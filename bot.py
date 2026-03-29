@@ -693,11 +693,14 @@ def kc_post(endpoint: str, body: dict) -> dict:
             d = r.json()
             if d.get("code") == "200000":
                 return d
-            msg = d.get("msg", "")
-            if any(w in msg.lower() for w in ["insufficient", "balance", "margin"]):
-                log.warning(f"Sin fondos suficientes en {endpoint} — KuCoin dice: {msg}")
+            msg  = d.get("msg", "")
+            code = d.get("code", "")
+            log.error(f"KuCoin POST {endpoint}: code={code} msg={msg}")
+            if any(w in msg.lower() for w in ["insufficient", "available"]):
                 return {"error": "insufficient_funds"}
-            log.error(f"KuCoin POST {endpoint}: {d.get('code')} {msg}")
+            if "margin mode" in msg.lower():
+                return {"error": "margin_mode"}
+            return {}
             return {}
         except requests.exceptions.ConnectionError:
             log.error(f"Sin conexion (intento {intento+1}) — reintentando en 30s")
@@ -1587,6 +1590,15 @@ def verificar_inicio():
             log.warning(f"  {s} no disponible — removido")
 
     estado["pares_activos"] = pares_ok
+
+    # Configurar modo CROSSED para todos los pares antes de operar
+    log.info("Configurando margin mode CROSSED en KuCoin Futuros...")
+    for s in pares_ok:
+        r = kc_post("/api/v2/position/changeMarginType", {"symbol": s, "marginType": "CROSSED"})
+        if r and r.get("code") == "200000":
+            log.info(f"  {s} — margin mode CROSSED OK")
+        else:
+            log.warning(f"  {s} — no se pudo cambiar margin mode: {r}")
 
     if errores:
         msg = "ERROR AL INICIAR — Bot detenido\n\n" + "\n".join(errores)
