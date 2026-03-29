@@ -444,8 +444,9 @@
             <div class="pos-pnl ${pnlCls}">${pnlSign}$${fmt(pnl)} <span style="font-size:0.75rem">${pnlSign}${fmt(p.pnl_pct||0,2)}%</span></div>
             <div class="pos-details">
               <div>Entrada</div><div><span>$${fmt(p.entrada,4)}</span></div>
-              <div>TP</div><div><span style="color:var(--accent)">$${fmt(p.tp,4)}</span></div>
-              <div>SL</div><div><span style="color:var(--red)">$${fmt(p.sl,4)}</span></div>
+              <div>${p.tp1 ? (p.tp1_hit ? 'TP1 ✅' : 'TP1') : 'TP'}</div><div><span style="color:var(--accent)">$${fmt(p.tp1||p.tp,4)}</span></div>
+              ${p.tp2 ? `<div>${p.tp1_hit ? 'TP2 🎯' : 'TP2'}</div><div><span style="color:#f7931a">$${fmt(p.tp2,4)}</span></div>` : ''}
+              <div>SL</div><div><span style="color:var(--red)">${p.tp1_hit ? '🔒 BE ' : ''}$${fmt(p.sl,4)}</span></div>
               <div>Margen</div><div><span>$${fmt(p.margen)}</span></div>
             </div>
             <button class="btn-cerrar" onclick="cerrarManual('${p.simbolo}')">⏹ Cerrar ${p.simbolo}</button>

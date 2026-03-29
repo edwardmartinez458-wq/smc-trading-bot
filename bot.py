@@ -778,8 +778,10 @@ def calcular_cantidad(simbolo: str, pc: float, capital_pct: float = 0.50) -> int
     log.info(f"Capital usado: {capital_pct*100:.0f}% (${margen:.2f}) | mult={mult} | Contratos: {cant}")
     return cant
 
-def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float) -> bool:
+def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float, cant_tp: int = None) -> bool:
     lev = estado["apalancamiento"]
+    if cant_tp is None:
+        cant_tp = cantidad
 
     r = kc_post("/api/v1/orders", {
         "clientOid": f"smc_{int(time.time()*1000)}",
@@ -817,7 +819,7 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "stop":          "up" if lado == "buy" else "down",
         "stopPrice":     str(tp),
         "stopPriceType": "MP",
-        "size":          cantidad,
+        "size":          cant_tp,
         "leverage":      str(lev),
         "reduceOnly":    True,
     })
@@ -1197,10 +1199,14 @@ def abrir(simbolo, t, pc, ia):
     atr_val  = calcular_atr(df_4h_sl) if not df_4h_sl.empty else 0
     sl_dist  = max(atr_val * 2, pc * 0.03)  # minimo 3% si ATR es muy pequeno
     sl_pct   = sl_dist / pc
-    tp_dist  = sl_dist * (TP_PCT / SL_PCT)  # mantiene ratio TP/SL original
-    sl = round(pc - sl_dist if lado == "buy" else pc + sl_dist, 6)
-    tp = round(pc + tp_dist if lado == "buy" else pc - tp_dist, 6)
-    log.info(f"{simbolo} — ATR {atr_val:.4f} → SL dist {sl_dist:.4f} ({sl_pct*100:.2f}%) | TP {tp_dist:.4f}")
+    # TP parcial: TP1 a 1.5x ATR (asegurar ganancia), TP2 a 3x ATR (objetivo final)
+    tp1_dist = max(atr_val * 1.5, pc * 0.015)  # minimo 1.5%
+    tp2_dist = max(atr_val * 3.0, pc * 0.03)   # minimo 3%
+    sl  = round(pc - sl_dist  if lado == "buy" else pc + sl_dist,  6)
+    tp1 = round(pc + tp1_dist if lado == "buy" else pc - tp1_dist, 6)
+    tp2 = round(pc + tp2_dist if lado == "buy" else pc - tp2_dist, 6)
+    tp  = tp1  # compatibilidad con resto del codigo
+    log.info(f"{simbolo} — ATR {atr_val:.4f} → SL ${sl:.4f} | TP1 ${tp1:.4f} | TP2 ${tp2:.4f}")
 
     # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 55)
@@ -1218,10 +1224,30 @@ def abrir(simbolo, t, pc, ia):
     margen = round(estado["capital"] * capital_pct, 2)
     cant   = calcular_cantidad(simbolo, pc, capital_pct)
 
-    resultado = ejecutar_orden(simbolo, lado, cant, sl, tp)
+    # Cantidades para TP parcial (50% cada uno, minimo 1 contrato)
+    cant_tp1 = max(1, cant // 2)
+    cant_tp2 = max(1, cant - cant_tp1)
+
+    resultado = ejecutar_orden(simbolo, lado, cant, sl, tp1, cant_tp=cant_tp1)
     if not resultado:
         return
-    sl_oid, tp_oid = resultado
+    sl_oid, tp1_oid = resultado
+
+    # Colocar TP2 para la otra mitad
+    close_s = "sell" if lado == "buy" else "buy"
+    tp2_oid = f"tp2_{int(time.time()*1000)}"
+    kc_post("/api/v1/orders", {
+        "clientOid":     tp2_oid,
+        "symbol":        simbolo,
+        "side":          close_s,
+        "type":          "market",
+        "stop":          "up" if lado == "buy" else "down",
+        "stopPrice":     str(tp2),
+        "stopPriceType": "MP",
+        "size":          cant_tp2,
+        "leverage":      str(estado["apalancamiento"]),
+        "reduceOnly":    True,
+    })
 
     with lock:
         estado["posiciones"].append({
@@ -1229,10 +1255,16 @@ def abrir(simbolo, t, pc, ia):
             "dir":          dir_,
             "entrada":      pc,
             "sl":           sl,
-            "tp":           tp,
+            "tp":           tp1,
+            "tp1":          tp1,
+            "tp2":          tp2,
+            "tp1_hit":      False,
             "sl_oid":       sl_oid,
-            "tp_oid":       tp_oid,
+            "tp_oid":       tp1_oid,
+            "tp2_oid":      tp2_oid,
             "cantidad":     cant,
+            "cant_tp1":     cant_tp1,
+            "cant_tp2":     cant_tp2,
             "margen":       margen,
             "g_pot":        round(g_pot, 2),
             "p_pot":        round(p_pot, 2),
@@ -1244,10 +1276,46 @@ def abrir(simbolo, t, pc, ia):
 
     tg(f"ENTRADA {simbolo} {dir_} @ ${pc:.4f}\n"
        f"IA {ia['confianza']}% | Riesgo: ${p_pot:.2f} USDT\n"
-       f"SL: ${sl:.4f} | TP: ${tp:.4f}\n"
+       f"SL: ${sl:.4f} | TP1: ${tp1:.4f} (50%) | TP2: ${tp2:.4f} (50%)\n"
        f"Razon: {ia['razon']}")
 
 def _cerrar_posicion(p: dict, pc: float):
+    # ── TP1 parcial: cierra 50% y mueve SL a breakeven ────────────────────────
+    if not p.get("tp1_hit", True) and "tp1" in p:
+        tp1_ok = (p["dir"] == "LONG" and pc >= p["tp1"]) or (p["dir"] == "SHORT" and pc <= p["tp1"])
+        if tp1_ok:
+            cant_tp1 = p.get("cant_tp1", 1)
+            cant_tp2 = p.get("cant_tp2", 1)
+            mult = obtener_multiplicador(p["simbolo"])
+            pnl_parcial = round((pc - p["entrada"]) * cant_tp1 * mult, 2) if p["dir"] == "LONG" \
+                          else round((p["entrada"] - pc) * cant_tp1 * mult, 2)
+            # Cancelar SL actual y colocar nuevo SL en breakeven para cant_tp2
+            close_s = "sell" if p["dir"] == "LONG" else "buy"
+            if p.get("sl_oid"):
+                kc_delete(f"/api/v1/orders/{p['sl_oid']}")
+            nuevo_sl_oid = f"sl_{int(time.time()*1000)}"
+            kc_post("/api/v1/orders", {
+                "clientOid":     nuevo_sl_oid,
+                "symbol":        p["simbolo"],
+                "side":          close_s,
+                "type":          "market",
+                "stop":          "down" if p["dir"] == "LONG" else "up",
+                "stopPrice":     str(p["entrada"]),
+                "stopPriceType": "MP",
+                "size":          cant_tp2,
+                "reduceOnly":    True,
+            })
+            with lock:
+                p["tp1_hit"] = True
+                p["sl"]      = p["entrada"]   # breakeven
+                p["sl_oid"]  = nuevo_sl_oid
+                p["tp"]      = p["tp2"]        # ahora monitorear TP2
+                p["cantidad"] = cant_tp2
+                estado["capital"] += pnl_parcial
+            log.warning(f"{p['simbolo']} TP1 +${pnl_parcial:.2f} | SL → breakeven ${p['entrada']:.4f} | Esperando TP2 ${p['tp2']:.4f}")
+            tg(f"✅ TP1 {p['simbolo']} {p['dir']} +${pnl_parcial:.2f} USDT\nSL movido a breakeven — esperando TP2 ${p['tp2']:.4f}")
+            return
+
     tp_ok = (p["dir"] == "LONG" and pc >= p["tp"]) or (p["dir"] == "SHORT" and pc <= p["tp"])
     sl_ok = (p["dir"] == "LONG" and pc <= p["sl"]) or (p["dir"] == "SHORT" and pc >= p["sl"])
 
