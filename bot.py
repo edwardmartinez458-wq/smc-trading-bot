@@ -1361,7 +1361,30 @@ def _cerrar_posicion(p: dict, pc: float):
             estado["circuit_breaker"] = True
         tg(f"CIRCUIT BREAKER — {CB_LIMITE} perdidas seguidas. Envia /reactivar para continuar.")
 
+def _sincronizar_con_kucoin():
+    """Elimina del estado interno posiciones que ya no existen en KuCoin."""
+    try:
+        r = kc_get("/api/v1/positions")
+        if r.get("code") != "200000":
+            return
+        simbolos_kucoin = {
+            p["symbol"] for p in (r.get("data") or [])
+            if float(p.get("currentQty", 0)) != 0
+        }
+        with lock:
+            antes = len(estado["posiciones"])
+            estado["posiciones"] = [
+                p for p in estado["posiciones"]
+                if p["simbolo"] in simbolos_kucoin
+            ]
+            cerradas = antes - len(estado["posiciones"])
+        if cerradas > 0:
+            log.warning(f"Monitor: {cerradas} posicion(es) cerradas externamente en KuCoin — limpiadas del estado interno")
+    except Exception as e:
+        log.error(f"Sincronizacion KuCoin: {e}")
+
 def monitor_posiciones():
+    ciclos = 0
     while True:
         try:
             with lock:
@@ -1371,9 +1394,13 @@ def monitor_posiciones():
                 if pc:
                     _cerrar_posicion(p, pc)
                 time.sleep(1)
+            # Cada 5 ciclos sincroniza con KuCoin para detectar cierres externos
+            ciclos += 1
+            if ciclos % 5 == 0:
+                _sincronizar_con_kucoin()
         except Exception as e:
             log.error(f"Monitor posiciones: {e}")
-        time.sleep(30)  # Revisar cada 30 seg, no 5 min
+        time.sleep(30)
 
 # ─── REBOTE CONTRA TENDENCIA ──────────────────────────────────────────────────
 
@@ -1822,14 +1849,28 @@ def verificar_inicio():
                 margen = abs(float(pk.get("posMargin", 0)))
                 ya_existe = any(p["simbolo"] == simbolo for p in estado["posiciones"])
                 if not ya_existe and simbolo in pares_ok:
+                    # Buscar ordenes activas de SL/TP en KuCoin para este simbolo
+                    sl_oid_, tp_oid_ = None, None
+                    try:
+                        ords = kc_get("/api/v1/stopOrders", {"symbol": simbolo, "status": "active"})
+                        for o in (ords.get("data", {}).get("items") or []):
+                            side = o.get("side", "")
+                            stop = o.get("stop", "")
+                            oid  = o.get("clientOid", o.get("id", ""))
+                            if "sl_" in oid:
+                                sl_oid_ = oid
+                            elif "tp_" in oid:
+                                tp_oid_ = oid
+                    except Exception:
+                        pass
                     estado["posiciones"].append({
                         "simbolo":      simbolo,
                         "dir":          dir_,
                         "entrada":      entrada,
                         "sl":           sl,
                         "tp":           tp,
-                        "sl_oid":       None,
-                        "tp_oid":       None,
+                        "sl_oid":       sl_oid_,
+                        "tp_oid":       tp_oid_,
                         "cantidad":     abs(int(qty)),
                         "margen":       round(margen, 2),
                         "g_pot":        round(margen * tp_pct_, 2),
@@ -1838,7 +1879,7 @@ def verificar_inicio():
                         "tipo":         "recuperada",
                         "ts":           datetime.now().isoformat(),
                     })
-                    log.warning(f"POSICION RECUPERADA: {simbolo} {dir_} entrada=${entrada:.4f} qty={int(qty)}")
+                    log.warning(f"POSICION RECUPERADA: {simbolo} {dir_} entrada=${entrada:.4f} sl_oid={sl_oid_} tp_oid={tp_oid_}")
             if pos_kucoin:
                 tg(f"POSICIONES RECUPERADAS tras reinicio: {len(pos_kucoin)} posicion(es) restauradas al monitor.")
             else:
@@ -2033,11 +2074,13 @@ def api_cerrar_manual():
         "size":       p.get("cantidad", 1),
         "reduceOnly": True,
     })
-    _cerrar_posicion.__globals__["_forzar_cierre"] = True
-    _cerrar_posicion(p, pc)
-    log.warning(f"{simbolo} — CIERRE MANUAL desde dashboard | pc=${pc:.4f}")
-    tg(f"CIERRE MANUAL: {simbolo} {p['dir']} @ ${pc:.4f}")
-    return jsonify({"ok": True, "mensaje": f"{simbolo} cerrado manualmente"})
+    # Remover posicion del estado interno inmediatamente
+    with lock:
+        estado["posiciones"] = [x for x in estado["posiciones"] if x["simbolo"] != simbolo]
+    pnl_estimado = round((p["entrada"] - pc) * p.get("cantidad",1) * obtener_multiplicador(simbolo), 2) if p["dir"] == "SHORT" else round((pc - p["entrada"]) * p.get("cantidad",1) * obtener_multiplicador(simbolo), 2)
+    log.warning(f"{simbolo} — CIERRE MANUAL desde dashboard | pc=${pc:.4f} | PnL est. ${pnl_estimado}")
+    tg(f"CIERRE MANUAL: {simbolo} {p['dir']} @ ${pc:.4f} | PnL est. ${pnl_estimado}")
+    return jsonify({"ok": True, "mensaje": f"{simbolo} cerrado manualmente", "pnl": pnl_estimado})
 
 @app.route("/api/limpiar_posiciones", methods=["POST"])
 def api_limpiar_posiciones():
