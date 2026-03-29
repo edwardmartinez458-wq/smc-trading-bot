@@ -1850,7 +1850,7 @@ def verificar_inicio():
                 tp = round(entrada * (1 + tp_pct_) if dir_ == "LONG" else entrada * (1 - tp_pct_), 6)
                 margen = abs(float(pk.get("posMargin", 0)))
                 ya_existe = any(p["simbolo"] == simbolo for p in estado["posiciones"])
-                if not ya_existe and simbolo in pares_ok:
+                if not ya_existe:
                     # Buscar ordenes activas de SL/TP en KuCoin para este simbolo
                     sl_oid_, tp_oid_ = None, None
                     try:
