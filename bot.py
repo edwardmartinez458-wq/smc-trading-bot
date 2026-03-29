@@ -1799,6 +1799,48 @@ def verificar_inicio():
 
     estado["pares_activos"] = pares_ok
 
+    # Sincronizar posiciones abiertas desde KuCoin (por si el bot se reinicio)
+    log.info("Sincronizando posiciones abiertas desde KuCoin...")
+    try:
+        r = kc_get("/api/v1/positions")
+        if r.get("code") == "200000":
+            pos_kucoin = [p for p in (r.get("data") or []) if float(p.get("currentQty", 0)) != 0]
+            for pk in pos_kucoin:
+                simbolo = pk.get("symbol", "")
+                qty     = float(pk.get("currentQty", 0))
+                dir_    = "LONG" if qty > 0 else "SHORT"
+                entrada = float(pk.get("avgEntryPrice", 0))
+                pc_     = float(pk.get("markPrice", entrada))
+                sl_pct_ = SL_PCT
+                tp_pct_ = TP_PCT
+                sl = round(entrada * (1 - sl_pct_) if dir_ == "LONG" else entrada * (1 + sl_pct_), 6)
+                tp = round(entrada * (1 + tp_pct_) if dir_ == "LONG" else entrada * (1 - tp_pct_), 6)
+                margen = abs(float(pk.get("posMargin", 0)))
+                ya_existe = any(p["simbolo"] == simbolo for p in estado["posiciones"])
+                if not ya_existe and simbolo in pares_ok:
+                    estado["posiciones"].append({
+                        "simbolo":      simbolo,
+                        "dir":          dir_,
+                        "entrada":      entrada,
+                        "sl":           sl,
+                        "tp":           tp,
+                        "sl_oid":       None,
+                        "tp_oid":       None,
+                        "cantidad":     abs(int(qty)),
+                        "margen":       round(margen, 2),
+                        "g_pot":        round(margen * tp_pct_, 2),
+                        "p_pot":        round(margen * sl_pct_, 2),
+                        "confianza_ia": 0,
+                        "tipo":         "recuperada",
+                        "ts":           datetime.now().isoformat(),
+                    })
+                    log.warning(f"POSICION RECUPERADA: {simbolo} {dir_} entrada=${entrada:.4f} qty={int(qty)}")
+            if pos_kucoin:
+                tg(f"POSICIONES RECUPERADAS tras reinicio: {len(pos_kucoin)} posicion(es) restauradas al monitor.")
+            else:
+                log.info("Sin posiciones abiertas en KuCoin al iniciar.")
+    except Exception as e:
+        log.error(f"Sincronizacion posiciones: {e}")
 
     if errores:
         msg = "ERROR AL INICIAR — Bot detenido\n\n" + "\n".join(errores)
