@@ -1365,12 +1365,21 @@ def _sincronizar_con_kucoin():
     """Elimina del estado interno posiciones que ya no existen en KuCoin."""
     try:
         r = kc_get("/api/v1/positions")
-        if r.get("code") != "200000":
-            return
-        simbolos_kucoin = {
-            p["symbol"] for p in (r.get("data") or [])
-            if float(p.get("currentQty", 0)) != 0
-        }
+        pos_data = [p for p in (r.get("data") or []) if float(p.get("currentQty", 0)) != 0] if r.get("code") == "200000" else []
+        # Fallback individual si bulk vacio
+        if not pos_data:
+            with lock:
+                simbolos_bot = [p["simbolo"] for p in estado["posiciones"]]
+            for s in simbolos_bot:
+                try:
+                    rp = kc_get("/api/v1/position", {"symbol": s})
+                    if rp.get("code") == "200000":
+                        pd_ = rp.get("data", {})
+                        if float(pd_.get("currentQty", 0)) != 0:
+                            pos_data.append(pd_)
+                except Exception:
+                    pass
+        simbolos_kucoin = {p["symbol"] for p in pos_data}
         with lock:
             cerradas_ext = [p for p in estado["posiciones"] if p["simbolo"] not in simbolos_kucoin]
             estado["posiciones"] = [p for p in estado["posiciones"] if p["simbolo"] in simbolos_kucoin]
@@ -1836,8 +1845,20 @@ def verificar_inicio():
     log.info("Sincronizando posiciones abiertas desde KuCoin...")
     try:
         r = kc_get("/api/v1/positions")
-        if r.get("code") == "200000":
-            pos_kucoin = [p for p in (r.get("data") or []) if float(p.get("currentQty", 0)) != 0]
+        pos_kucoin = [p for p in (r.get("data") or []) if float(p.get("currentQty", 0)) != 0] if r.get("code") == "200000" else []
+        # Fallback: consultar cada simbolo individualmente (cubre modo aislado)
+        if not pos_kucoin:
+            log.info("positions bulk vacio — consultando simbolos individualmente...")
+            for s in list(estado["pares_activos"]):
+                try:
+                    rp = kc_get("/api/v1/position", {"symbol": s})
+                    if rp.get("code") == "200000":
+                        pd_ = rp.get("data", {})
+                        if float(pd_.get("currentQty", 0)) != 0:
+                            pos_kucoin.append(pd_)
+                except Exception:
+                    pass
+        if r.get("code") == "200000" or True:
             for pk in pos_kucoin:
                 simbolo = pk.get("symbol", "")
                 qty     = float(pk.get("currentQty", 0))
@@ -1882,10 +1903,10 @@ def verificar_inicio():
                         "ts":           datetime.now().isoformat(),
                     })
                     log.warning(f"POSICION RECUPERADA: {simbolo} {dir_} entrada=${entrada:.4f} sl_oid={sl_oid_} tp_oid={tp_oid_}")
-            if pos_kucoin:
-                tg(f"POSICIONES RECUPERADAS tras reinicio: {len(pos_kucoin)} posicion(es) restauradas al monitor.")
-            else:
-                log.info("Sin posiciones abiertas en KuCoin al iniciar.")
+        if pos_kucoin:
+            tg(f"POSICIONES RECUPERADAS tras reinicio: {len(pos_kucoin)} posicion(es) restauradas al monitor.")
+        else:
+            log.info("Sin posiciones abiertas en KuCoin al iniciar.")
     except Exception as e:
         log.error(f"Sincronizacion posiciones: {e}")
 
