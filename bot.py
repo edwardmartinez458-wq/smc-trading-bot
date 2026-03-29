@@ -1724,47 +1724,54 @@ def abrir_breakout(simbolo, pc, ia):
 
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
-def _trade_tendencia(simbolo, t, pc, df_4h, df_1h):
-    """Trade en la direccion de la tendencia diaria (flujo original)."""
-    adx = calcular_adx(df_4h)
-    if adx < 20:
-        log.info(f"{simbolo} — RECHAZADO: ADX {adx} < 20 (mercado sin tendencia real)")
+def _trade_ema_rsi(simbolo, t, pc, df_4h):
+    """Nueva estrategia: EMA21 + EMA89 + RSI14 en 4H (mas simple y medible)."""
+    if len(df_4h) < 90:
+        log.info(f"{simbolo} — sin suficientes velas 4H para EMA89")
         return
-    log.info(f"{simbolo} — ADX {adx} OK")
 
-    if not hay_bos(df_4h, t, simbolo):
-        log.info(f"{simbolo} — RECHAZADO: sin BOS en 15min/4H")
-        return
-    log.info(f"{simbolo} — BOS OK")
+    # Calcular EMA21 y EMA89
+    ema21 = df_4h["close"].ewm(span=21, adjust=False).mean()
+    ema89 = df_4h["close"].ewm(span=89, adjust=False).mean()
+    rsi   = calcular_rsi(df_4h)
 
+    ema21_v = ema21.iloc[-1]
+    ema89_v = ema89.iloc[-1]
+
+    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} RSI={rsi:.1f}")
+
+    # Filtro tendencia BTC alineada
     if not filtro_tendencia_btc(t):
         log.info(f"{simbolo} — RECHAZADO: filtro BTC (par={t}, BTC={estado['tendencia_btc']})")
         return
-    log.info(f"{simbolo} — filtro BTC OK")
 
-    ob = buscar_ob(df_4h, t)
-    if not ob["valido"]:
-        log.info(f"{simbolo} — RECHAZADO: sin Order Block valido")
-        return
-    log.info(f"{simbolo} — OB encontrado: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}")
+    # LONG: EMA21 > EMA89 + RSI entre 45-70 + precio sobre EMA21
+    if t == "alcista":
+        if ema21_v <= ema89_v:
+            log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin tendencia alcista 4H)")
+            return
+        if rsi < 45 or rsi > 70:
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (45-70)")
+            return
+        if pc < ema21_v:
+            log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
+            return
 
-    if not en_ob(pc, ob, t):
-        log.info(f"{simbolo} — RECHAZADO: precio fuera del OB (pc=${pc:.4f}, OB=${ob['zona_baja']:.4f}-${ob['zona_alta']:.4f})")
-        return
-    log.info(f"{simbolo} — precio EN el OB OK")
+    # SHORT: EMA21 < EMA89 + RSI entre 30-55 + precio bajo EMA21
+    elif t == "bajista":
+        if ema21_v >= ema89_v:
+            log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin tendencia bajista 4H)")
+            return
+        if rsi > 55 or rsi < 30:
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (30-55)")
+            return
+        if pc > ema21_v:
+            log.info(f"{simbolo} — RECHAZADO: precio sobre EMA21 (pc=${pc:.4f} > ${ema21_v:.4f})")
+            return
 
-    # FVG como confluencia (no bloquea, pero suma confianza al log)
-    fvg = buscar_fvg(df_4h, t)
-    if fvg["valido"]:
-        log.info(f"{simbolo} — FVG detectado: ${fvg['zona_baja']:.4f} - ${fvg['zona_alta']:.4f} (confluencia extra)")
-
-    if not confirma_1h(df_1h, t):
-        log.info(f"{simbolo} — RECHAZADO: sin confirmacion 1H")
-        return
-    log.info(f"{simbolo} — confirmacion 1H OK")
-
-    log.info(f"{simbolo} — 4/4 FILTROS PASADOS — consultando IA...")
-    ia = filtro_ia(simbolo, t, pc, ob, 0)
+    log.info(f"{simbolo} — EMA+RSI OK — consultando IA...")
+    ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
+    ia = filtro_ia(simbolo, t, pc, ob_ctx, 0)
 
     if not ia["entrar"]:
         log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
@@ -1808,8 +1815,8 @@ def analizar(simbolo: str):
         log.info(f"{simbolo} — RECHAZADO: tendencia lateral")
         return
 
-    # --- Flujo principal: trade en direccion de tendencia ---
-    _trade_tendencia(simbolo, t, pc, df_4h, df_1h)
+    # --- Flujo principal: trade EMA21 + EMA89 + RSI14 ---
+    _trade_ema_rsi(simbolo, t, pc, df_4h)
 
     with lock:
         tiene_pos = any(p["simbolo"] == simbolo for p in estado["posiciones"])
