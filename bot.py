@@ -701,7 +701,6 @@ def kc_post(endpoint: str, body: dict) -> dict:
             if "margin mode" in msg.lower():
                 return {"error": "margin_mode"}
             return {}
-            return {}
         except requests.exceptions.ConnectionError:
             log.error(f"Sin conexion (intento {intento+1}) — reintentando en 30s")
             time.sleep(30)
@@ -759,15 +758,14 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
     lev = estado["apalancamiento"]
 
     r = kc_post("/api/v1/orders", {
-        "clientOid":  f"smc_{int(time.time()*1000)}",
-        "symbol":     simbolo,
-        "side":       lado,
-        "type":       "market",
-        "size":       cantidad,
-        "leverage":   str(lev),
-        "marginMode": "CROSSED",
+        "clientOid": f"smc_{int(time.time()*1000)}",
+        "symbol":    simbolo,
+        "side":      lado,
+        "type":      "market",
+        "size":      cantidad,
+        "leverage":  str(lev),
     })
-    if not r or r.get("error") == "insufficient_funds":
+    if not r or r.get("error") in ("insufficient_funds", "margin_mode"):
         return False
 
     close_s  = "sell" if lado == "buy" else "buy"
@@ -785,7 +783,6 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "size":          cantidad,
         "leverage":      str(lev),
         "reduceOnly":    True,
-        "marginMode":    "CROSSED",
     })
 
     kc_post("/api/v1/orders", {
@@ -799,7 +796,6 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float)
         "size":          cantidad,
         "leverage":      str(lev),
         "reduceOnly":    True,
-        "marginMode":    "CROSSED",
     })
     return sl_oid, tp_oid
 
@@ -1080,7 +1076,6 @@ def _cerrar_posicion(p: dict, pc: float):
                 "stopPriceType": "MP",
                 "size":          p.get("cantidad", 1),
                 "reduceOnly":    True,
-                "marginMode":    "CROSSED",
             })
             p["sl"]    = nuevo_sl
             p["sl_oid"] = nuevo_oid
@@ -1699,6 +1694,13 @@ def api_historial():
     except Exception as e:
         log.error(f"Historial API: {e}")
     return jsonify([])
+
+@app.route("/api/limpiar_posiciones", methods=["POST"])
+def api_limpiar_posiciones():
+    with lock:
+        estado["posiciones"] = []
+    log.warning("Posiciones internas limpiadas manualmente via API")
+    return jsonify({"ok": True, "mensaje": "Posiciones limpiadas"})
 
 @app.route("/api/logs")
 def api_logs():
