@@ -1354,11 +1354,11 @@ def _cerrar_posicion(p: dict, pc: float):
             p["sl_oid"] = nuevo_oid
             log.info(f"{p['simbolo']} — Trailing SL actualizado en KuCoin: ${nuevo_sl:.4f}")
 
-    # Cierre por cambio de tendencia: SHORT en mercado alcista o LONG en mercado bajista
+    # Cierre por cambio de tendencia (solo posiciones abiertas por el bot, no recuperadas)
     t_btc = estado.get("tendencia_btc", "lateral")
     tendencia_invertida = (p["dir"] == "SHORT" and t_btc == "alcista") or \
                           (p["dir"] == "LONG"  and t_btc == "bajista")
-    if tendencia_invertida:
+    if tendencia_invertida and p.get("tipo") != "recuperada":
         log.info(f"{p['simbolo']} — CIERRE por cambio tendencia BTC ({t_btc}) contra {p['dir']}")
         tp_ok = False
         sl_ok = True  # se trata como SL para el calculo de PnL real
