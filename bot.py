@@ -1914,15 +1914,15 @@ def verificar_inicio():
         estado["capital_inicial"]   = b
         estado["capital_inicio_dia"] = b
 
-    log.info("Verificando Anthropic API...")
+    log.info("Verificando DeepSeek API...")
     try:
-        ai.messages.create(
-            model="claude-sonnet-4-6", max_tokens=5,
+        ai.chat.completions.create(
+            model="deepseek-chat", max_tokens=5,
             messages=[{"role": "user", "content": "ok"}]
         )
-        log.info("Anthropic OK")
+        log.info("DeepSeek OK")
     except Exception as e:
-        errores.append(f"Anthropic API: {e}")
+        errores.append(f"DeepSeek API: {e}")
 
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         log.info("Verificando Telegram...")
