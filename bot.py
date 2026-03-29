@@ -1430,15 +1430,14 @@ def _cerrar_posicion(p: dict, pc: float):
         tg(f"CIRCUIT BREAKER — {CB_LIMITE} perdidas seguidas. Envia /reactivar para continuar.")
 
 def _sincronizar_con_kucoin():
-    """Elimina del estado interno posiciones que ya no existen en KuCoin."""
+    """Sincroniza posiciones con KuCoin: agrega las que faltan, elimina las cerradas."""
     try:
         r = kc_get("/api/v1/positions")
         pos_data = [p for p in (r.get("data") or []) if float(p.get("currentQty", 0)) != 0] if r.get("code") == "200000" else []
-        # Fallback individual si bulk vacio
+
+        # Fallback: consultar cada par individualmente (cubre modo aislado)
         if not pos_data:
-            with lock:
-                simbolos_bot = [p["simbolo"] for p in estado["posiciones"]]
-            for s in simbolos_bot:
+            for s in list(estado.get("pares_activos", [])):
                 try:
                     rp = kc_get("/api/v1/position", {"symbol": s})
                     if rp.get("code") == "200000":
@@ -1447,18 +1446,45 @@ def _sincronizar_con_kucoin():
                             pos_data.append(pd_)
                 except Exception:
                     pass
+
         simbolos_kucoin = {p["symbol"] for p in pos_data}
+
+        # 1) Eliminar posiciones internas que ya no existen en KuCoin
         with lock:
             cerradas_ext = [p for p in estado["posiciones"] if p["simbolo"] not in simbolos_kucoin]
             estado["posiciones"] = [p for p in estado["posiciones"] if p["simbolo"] in simbolos_kucoin]
         for p in cerradas_ext:
             pc = precio(p["simbolo"]) or p["entrada"]
-            pnl_est = round((p["entrada"] - pc) * p.get("cantidad",1) * obtener_multiplicador(p["simbolo"]), 2) if p["dir"] == "SHORT" else round((pc - p["entrada"]) * p.get("cantidad",1) * obtener_multiplicador(p["simbolo"]), 2)
+            pnl_est = round((p["entrada"] - pc) * p.get("cantidad",1) * obtener_multiplicador(p["simbolo"]), 2) if p["dir"] == "SHORT" \
+                      else round((pc - p["entrada"]) * p.get("cantidad",1) * obtener_multiplicador(p["simbolo"]), 2)
             resultado = "ganado" if pnl_est > 0 else "perdido"
             guardar_historial(p["simbolo"], p["dir"], p["entrada"], pc, pnl_est, resultado, p.get("confianza_ia", 0))
             log.warning(f"Monitor: {p['simbolo']} cerrada externamente — PnL est. ${pnl_est}")
-        if cerradas_ext:
-            log.warning(f"Monitor: {len(cerradas_ext)} posicion(es) cerradas externamente en KuCoin — limpiadas del estado interno")
+
+        # 2) Agregar posiciones de KuCoin que el bot no esta rastreando
+        with lock:
+            simbolos_bot = {p["simbolo"] for p in estado["posiciones"]}
+        for pk in pos_data:
+            simbolo = pk.get("symbol", "")
+            if simbolo in simbolos_bot:
+                continue
+            qty    = float(pk.get("currentQty", 0))
+            dir_   = "LONG" if qty > 0 else "SHORT"
+            entrada = float(pk.get("avgEntryPrice", 0))
+            margen  = abs(float(pk.get("posMargin", 0)))
+            sl = round(entrada * (1 - SL_PCT) if dir_ == "LONG" else entrada * (1 + SL_PCT), 6)
+            tp = round(entrada * (1 + TP_PCT) if dir_ == "LONG" else entrada * (1 - TP_PCT), 6)
+            with lock:
+                estado["posiciones"].append({
+                    "simbolo": simbolo, "dir": dir_, "entrada": entrada,
+                    "sl": sl, "tp": tp, "sl_oid": None, "tp_oid": None,
+                    "cantidad": abs(int(qty)), "margen": round(margen, 2),
+                    "g_pot": 0, "p_pot": 0, "confianza_ia": 0,
+                    "tipo": "recuperada", "ts": datetime.now().isoformat(),
+                })
+            log.warning(f"Sync: POSICION RECUPERADA {simbolo} {dir_} entrada=${entrada:.4f}")
+            tg(f"POSICION RECUPERADA: {simbolo} {dir_} @ ${entrada:.4f}")
+
     except Exception as e:
         log.error(f"Sincronizacion KuCoin: {e}")
 
@@ -1473,9 +1499,9 @@ def monitor_posiciones():
                 if pc:
                     _cerrar_posicion(p, pc)
                 time.sleep(1)
-            # Cada 5 ciclos sincroniza con KuCoin para detectar cierres externos
+            # Cada 2 ciclos sincroniza con KuCoin (detecta cierres y posiciones perdidas)
             ciclos += 1
-            if ciclos % 5 == 0:
+            if ciclos % 2 == 0:
                 _sincronizar_con_kucoin()
         except Exception as e:
             log.error(f"Monitor posiciones: {e}")
