@@ -155,18 +155,54 @@
   .card-title { font-family:'Space Mono',monospace; font-size:0.62rem; letter-spacing:0.12em; color:var(--muted); text-transform:uppercase; }
   .card-body { padding:1rem; }
 
-  /* POSITIONS TABLE */
-  .pos-table { width:100%; border-collapse:collapse; }
-  .pos-table th {
-    font-family:'Space Mono',monospace; font-size:0.55rem;
-    letter-spacing:0.1em; color:var(--muted); text-transform:uppercase;
-    padding:0.4rem 0.6rem; text-align:left; border-bottom:1px solid var(--border);
+  /* POSITIONS CARDS */
+  .pos-cards { display:flex; flex-direction:column; gap:0.75rem; padding:0.75rem; }
+  .pos-card {
+    background: #12121f;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    padding: 0.9rem 1rem;
+    position: relative;
+    overflow: hidden;
   }
-  .pos-table td {
-    padding:0.65rem 0.6rem; font-family:'Space Mono',monospace;
-    font-size:0.7rem; border-bottom:1px solid rgba(26,26,46,0.5);
+  .pos-card.long-card  { border-left: 3px solid var(--accent); }
+  .pos-card.short-card { border-left: 3px solid var(--red); }
+  .pos-card-top {
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:0.6rem;
   }
-  .pos-table tr:last-child td { border-bottom:none; }
+  .pos-par {
+    font-family:'Space Mono',monospace; font-size:0.85rem;
+    font-weight:700; color:var(--text);
+  }
+  .pos-side {
+    font-family:'Space Mono',monospace; font-size:0.65rem;
+    font-weight:700; padding:3px 10px; border-radius:20px;
+  }
+  .pos-side.long  { background:rgba(0,255,157,0.12); color:var(--accent); }
+  .pos-side.short { background:rgba(255,59,92,0.12);  color:var(--red); }
+  .pos-lev { font-family:'Space Mono',monospace; font-size:0.58rem; color:var(--muted); margin-left:6px; }
+  .pos-pnl {
+    font-family:'Space Mono',monospace; font-size:1.4rem; font-weight:700;
+    margin-bottom:0.4rem;
+  }
+  .pos-pnl.pos { color:var(--accent); }
+  .pos-pnl.neg { color:var(--red); }
+  .pos-details {
+    display:grid; grid-template-columns:1fr 1fr;
+    gap:0.3rem 0; font-family:'Space Mono',monospace; font-size:0.6rem;
+    color:var(--muted); margin-bottom:0.75rem;
+  }
+  .pos-details span { color:var(--text); }
+  .btn-cerrar {
+    width:100%; font-family:'Space Mono',monospace;
+    font-size:0.65rem; letter-spacing:0.08em;
+    padding:8px; border-radius:7px;
+    border:1px solid var(--red); color:var(--red);
+    background:transparent; cursor:pointer;
+    transition:all 0.15s; text-transform:uppercase;
+  }
+  .btn-cerrar:hover { background:var(--red); color:#fff; }
   .long  { color:var(--accent); font-weight:700; }
   .short { color:var(--red);    font-weight:700; }
   .pos   { color:var(--accent); }
@@ -294,20 +330,11 @@
   <div class="grid-2">
     <div class="card">
       <div class="card-header">
-        <span class="card-title">Posiciones abiertas</span>
+        <span class="card-title">Mis futuros</span>
         <span class="card-title" id="pos-count">0</span>
       </div>
-      <div style="padding:0">
-        <table class="pos-table">
-          <thead>
-            <tr>
-              <th>Par</th><th>Lado</th><th>Entrada</th><th>Actual</th><th>P&L</th>
-            </tr>
-          </thead>
-          <tbody id="pos-tbody">
-            <tr><td colspan="5"><div class="empty">Sin posiciones abiertas</div></td></tr>
-          </tbody>
-        </table>
+      <div id="pos-cards" class="pos-cards">
+        <div class="empty">Sin posiciones abiertas</div>
       </div>
     </div>
 
@@ -387,25 +414,40 @@
       const pos = d.posiciones || [];
       document.getElementById('num-pos').textContent = pos.length;
       document.getElementById('pos-count').textContent = pos.length;
-      const tbody = document.getElementById('pos-tbody');
+      const posCards = document.getElementById('pos-cards');
       if (!pos.length) {
-        tbody.innerHTML = '<tr><td colspan="5"><div class="empty">Sin posiciones abiertas</div></td></tr>';
+        posCards.innerHTML = '<div class="empty">Sin posiciones abiertas</div>';
         document.getElementById('pnl-total').textContent = '$0.00';
         document.getElementById('pnl-pct').textContent = '0.00%';
       } else {
         let pnlTotal = 0;
-        tbody.innerHTML = pos.map(p => {
-          const pnl = parseFloat(p.pnl || 0);
-          pnlTotal += pnl;
+        posCards.innerHTML = pos.map(p => {
+          const pnl    = parseFloat(p.pnl || 0);
+          pnlTotal    += pnl;
+          const isLong = (p.dir||p.lado||'').toUpperCase() === 'LONG';
           const pnlCls = pnl >= 0 ? 'pos' : 'neg';
-          const sideCls = (p.lado||'').toUpperCase() === 'LONG' ? 'long' : 'short';
-          return `<tr>
-            <td>${p.simbolo||'—'}</td>
-            <td class="${sideCls}">${(p.lado||'—').toUpperCase()}</td>
-            <td>$${fmt(p.entrada)}</td>
-            <td>$${fmt(p.precio_actual)}</td>
-            <td class="${pnlCls}">${pnl>=0?'+':''}$${fmt(pnl)}</td>
-          </tr>`;
+          const pnlSign = pnl >= 0 ? '+' : '';
+          const pnlPct = p.entrada ? (pnl / (p.margen||1) * 100).toFixed(2) : '0.00';
+          const sideLbl = isLong ? 'Largo' : 'Corto';
+          return `
+          <div class="pos-card ${isLong ? 'long-card' : 'short-card'}">
+            <div class="pos-card-top">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="pos-par">${p.simbolo||'—'}</span>
+                <span class="pos-side ${isLong?'long':'short'}">${sideLbl}</span>
+                <span class="pos-lev">10x</span>
+              </div>
+              <span style="font-family:'Space Mono',monospace;font-size:0.6rem;color:var(--muted)">IA ${p.confianza_ia||'—'}%</span>
+            </div>
+            <div class="pos-pnl ${pnlCls}">${pnlSign}$${fmt(pnl)} <span style="font-size:0.75rem">${pnlSign}${pnlPct}%</span></div>
+            <div class="pos-details">
+              <div>Entrada</div><div><span>$${fmt(p.entrada,4)}</span></div>
+              <div>TP</div><div><span style="color:var(--accent)">$${fmt(p.tp,4)}</span></div>
+              <div>SL</div><div><span style="color:var(--red)">$${fmt(p.sl,4)}</span></div>
+              <div>Margen</div><div><span>$${fmt(p.margen)}</span></div>
+            </div>
+            <button class="btn-cerrar" onclick="cerrarManual('${p.simbolo}')">⏹ Cerrar ${p.simbolo}</button>
+          </div>`;
         }).join('');
         const pnlEl = document.getElementById('pnl-total');
         pnlEl.textContent = (pnlTotal>=0?'+':'') + '$' + fmt(pnlTotal);
@@ -517,6 +559,24 @@
 
   async function reporte() {
     showNotif('Enviando reporte a Telegram...', 'var(--accent)');
+  }
+
+  async function cerrarManual(simbolo) {
+    if (!confirm(`¿Cerrar posición ${simbolo} ahora al precio de mercado?`)) return;
+    try {
+      const r = await fetch(BASE + '/api/cerrar_manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ simbolo })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        showNotif(`✓ ${simbolo} cerrado`, 'var(--accent)');
+        cargarEstado();
+      } else {
+        showNotif(`Error: ${d.error}`, 'var(--red)');
+      }
+    } catch(e) { showNotif('Error al cerrar', 'var(--red)'); }
   }
 
   function tick() {

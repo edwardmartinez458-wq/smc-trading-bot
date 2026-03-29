@@ -1940,6 +1940,41 @@ def api_test_orden():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
+@app.route("/api/cerrar_manual", methods=["POST"])
+def api_cerrar_manual():
+    """Cierra una posicion especifica manualmente desde el dashboard."""
+    from flask import request as freq
+    data    = freq.get_json(silent=True) or {}
+    simbolo = data.get("simbolo")
+    if not simbolo:
+        return jsonify({"ok": False, "error": "simbolo requerido"})
+    with lock:
+        pos = [p for p in estado["posiciones"] if p["simbolo"] == simbolo]
+    if not pos:
+        return jsonify({"ok": False, "error": "posicion no encontrada"})
+    p  = pos[0]
+    pc = precio(simbolo) or p["entrada"]
+    lado_cierre = "sell" if p["dir"] == "LONG" else "buy"
+    # Cancelar TP y SL pendientes
+    for oid_key in ("sl_oid", "tp_oid"):
+        oid = p.get(oid_key)
+        if oid:
+            kc_delete(f"/api/v1/orders/{oid}")
+    # Orden de mercado para cerrar
+    r = kc_post("/api/v1/orders", {
+        "clientOid":  f"close_{int(time.time()*1000)}",
+        "symbol":     simbolo,
+        "side":       lado_cierre,
+        "type":       "market",
+        "size":       p.get("cantidad", 1),
+        "reduceOnly": True,
+    })
+    _cerrar_posicion.__globals__["_forzar_cierre"] = True
+    _cerrar_posicion(p, pc)
+    log.warning(f"{simbolo} — CIERRE MANUAL desde dashboard | pc=${pc:.4f}")
+    tg(f"CIERRE MANUAL: {simbolo} {p['dir']} @ ${pc:.4f}")
+    return jsonify({"ok": True, "mensaje": f"{simbolo} cerrado manualmente"})
+
 @app.route("/api/limpiar_posiciones", methods=["POST"])
 def api_limpiar_posiciones():
     with lock:
