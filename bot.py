@@ -155,6 +155,30 @@ def verificar_sl_diario():
         tg(msg)
         log.warning(f"SL diario activado — caida {caida*100:.1f}%")
 
+# ─── FEAR & GREED + FUNDING RATE ─────────────────────────────────────────────
+
+def obtener_fear_greed() -> str:
+    """Obtiene el Fear & Greed Index de crypto (0=miedo extremo, 100=codicia extrema)."""
+    try:
+        r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5).json()
+        val  = int(r["data"][0]["value"])
+        name = r["data"][0]["value_classification"]
+        return f"Fear & Greed Index: {val}/100 ({name})"
+    except Exception:
+        return ""
+
+def obtener_funding_rate(simbolo: str) -> str:
+    """Obtiene el funding rate actual del par en KuCoin Futuros."""
+    try:
+        r = kc_get(f"/api/v1/funding-rate/{simbolo}/current")
+        if r.get("code") == "200000":
+            rate = float(r["data"]["value"]) * 100
+            sesgo = "SHORT (mercado muy largo)" if rate > 0.05 else "LONG (mercado muy corto)" if rate < -0.05 else "neutral"
+            return f"Funding Rate: {rate:.4f}% → sesgo {sesgo}"
+    except Exception:
+        pass
+    return ""
+
 # ─── FILTRO TENDENCIA BTC ─────────────────────────────────────────────────────
 
 def actualizar_tendencia_btc():
@@ -1035,27 +1059,31 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
     if trump_activa and trump_texto:
         trump_contexto = f"\nALERTA TRUMP ACTIVA: Post reciente dice '{trump_texto[:150]}' → impacto estimado {trump_dir}"
 
-    memoria_contexto = leer_memoria_trades(simbolo)
+    memoria_contexto  = leer_memoria_trades(simbolo)
+    fear_greed        = obtener_fear_greed()
+    funding           = obtener_funding_rate(simbolo)
 
     for intento in range(3):
         try:
             r = ai.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=150,
+                max_tokens=8000,
+                thinking={"type": "enabled", "budget_tokens": 6000},
                 messages=[{"role": "user", "content": f"""Eres el filtro de riesgo de un bot SMC. Decide si entrar o no.
 
 SENAL:
 Par: {simbolo} | Fecha: {datetime.now().strftime('%Y-%m-%d %A')} | Mes: {datetime.now().month}
 Tendencia Daily: {t} | Tendencia BTC: {t_btc} | Precio: ${pc:.4f}
 Order Block: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}
-Toques trendline: {toques} | Direccion: {'LONG' if t == 'alcista' else 'SHORT'}
-Hora Chile: {hora_chile()}h
+Direccion: {'LONG' if t == 'alcista' else 'SHORT'} | Hora Chile: {hora_chile()}h
+{fear_greed}
+{funding}
 {trump_contexto}
 {memoria_contexto}
 
 ANALIZA:
-1. Mes {datetime.now().month} historicamente favorable en crypto?
-2. Ciclo post-halving abril 2024 apoya esta direccion?
+1. El Fear & Greed apoya o contradice la entrada?
+2. El Funding Rate indica posicionamiento extremo que pueda revertirse?
 3. La tendencia BTC apoya la entrada?
 4. Hay riesgos macro relevantes esta semana?
 5. La alerta Trump (si existe) apoya o contradice la entrada?
@@ -1066,7 +1094,11 @@ DECISION: ENTRAR o NO_ENTRAR
 CONFIANZA: 0-100
 RAZON: una linea breve"""}]
             )
-            texto = r.content[0].text.strip()
+            texto = ""
+            for block in r.content:
+                if block.type == "text":
+                    texto = block.text.strip()
+                    break
             dec, conf, razon = "NO_ENTRAR", 0, "Sin respuesta"
             for l in texto.split("\n"):
                 if "DECISION:" in l: dec = "ENTRAR" if "ENTRAR" in l else "NO_ENTRAR"
@@ -1074,6 +1106,7 @@ RAZON: una linea breve"""}]
                     try: conf = int(l.split(":")[1].strip())
                     except: pass
                 elif "RAZON:" in l: razon = l.split(":", 1)[1].strip()
+            log.info(f"{simbolo} — Fear&Greed: {fear_greed} | Funding: {funding}")
             return {"entrar": dec == "ENTRAR" and conf >= 55, "confianza": conf, "razon": razon}
         except Exception as e:
             log.error(f"IA intento {intento+1}: {e}")
