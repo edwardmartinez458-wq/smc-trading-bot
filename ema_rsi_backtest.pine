@@ -1,0 +1,78 @@
+//@version=5
+strategy("EMA21+EMA89+RSI Bot Edward", overlay=true, initial_capital=92, currency=currency.USDT, default_qty_type=strategy.percent_of_equity, default_qty_value=35, commission_type=strategy.commission.percent, commission_value=0.05, slippage=2, max_lines_count=200, max_boxes_count=200)
+
+// INPUTS
+ema_fast_len  = input.int(21,   "EMA Rapida",           group="EMAs")
+ema_slow_len  = input.int(89,   "EMA Lenta",            group="EMAs")
+rsi_len       = input.int(14,   "RSI Periodo",          group="RSI")
+rsi_long_min  = input.int(45,   "RSI Long Minimo",      group="RSI")
+rsi_long_max  = input.int(70,   "RSI Long Maximo",      group="RSI")
+rsi_short_min = input.int(30,   "RSI Short Minimo",     group="RSI")
+rsi_short_max = input.int(55,   "RSI Short Maximo",     group="RSI")
+atr_len       = input.int(14,   "ATR Periodo",          group="ATR SL TP")
+atr_sl_mult   = input.float(2.0,"SL Multiplicador ATR", group="ATR SL TP")
+atr_tp1_mult  = input.float(1.5,"TP1 Multiplicador ATR",group="ATR SL TP")
+atr_tp2_mult  = input.float(3.0,"TP2 Multiplicador ATR",group="ATR SL TP")
+usar_filtro   = input.bool(true, "Filtro tendencia diaria (EMA50)", group="Filtros")
+solo_long     = input.bool(false,"Solo LONG",           group="Filtros")
+solo_short    = input.bool(false,"Solo SHORT",          group="Filtros")
+
+// TENDENCIA DIARIA
+daily_close  = request.security(syminfo.tickerid, "D", close)
+daily_ema50  = request.security(syminfo.tickerid, "D", ta.ema(close, 50))
+tend_alcista = daily_close > daily_ema50
+tend_bajista = daily_close < daily_ema50
+
+// EMAs
+ema21 = ta.ema(close, ema_fast_len)
+ema89 = ta.ema(close, ema_slow_len)
+
+// RSI
+rsi = ta.rsi(close, rsi_len)
+
+// ATR
+atr = ta.atr(atr_len)
+
+// CONDICIONES
+ema_bull = ema21 > ema89
+ema_bear = ema21 < ema89
+
+filtro_long  = usar_filtro ? tend_alcista : true
+filtro_short = usar_filtro ? tend_bajista : true
+
+long_cond  = ema_bull and rsi >= rsi_long_min  and rsi <= rsi_long_max  and close > ema21 and filtro_long  and not solo_short
+short_cond = ema_bear and rsi >= rsi_short_min and rsi <= rsi_short_max and close < ema21 and filtro_short and not solo_long
+
+// SL TP
+long_sl  = close - atr * atr_sl_mult
+long_tp2 = close + atr * atr_tp2_mult
+short_sl  = close + atr * atr_sl_mult
+short_tp2 = close - atr * atr_tp2_mult
+
+// ENTRADAS
+if long_cond and strategy.position_size == 0
+    strategy.entry("LONG", strategy.long)
+    strategy.exit("LONG EXIT", "LONG", stop=long_sl, limit=long_tp2)
+
+if short_cond and strategy.position_size == 0
+    strategy.entry("SHORT", strategy.short)
+    strategy.exit("SHORT EXIT", "SHORT", stop=short_sl, limit=short_tp2)
+
+// PLOTS
+plot(ema21, "EMA21", color=ema_bull ? color.new(color.lime, 20) : color.new(color.red, 20), linewidth=2)
+plot(ema89, "EMA89", color=color.new(color.orange, 20), linewidth=2)
+plotshape(long_cond,  title="LONG",  location=location.belowbar, style=shape.triangleup,   color=color.lime, size=size.normal)
+plotshape(short_cond, title="SHORT", location=location.abovebar, style=shape.triangledown, color=color.red,  size=size.normal)
+
+// TABLA
+var table info = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 70), border_color=color.gray, border_width=1)
+table.cell(info, 0, 0, "EMA21",  text_color=color.gray, text_size=size.small)
+table.cell(info, 1, 0, str.tostring(math.round(ema21, 2)), text_color=ema_bull ? color.lime : color.red, text_size=size.small)
+table.cell(info, 0, 1, "EMA89",  text_color=color.gray, text_size=size.small)
+table.cell(info, 1, 1, str.tostring(math.round(ema89, 2)), text_color=color.orange, text_size=size.small)
+table.cell(info, 0, 2, "RSI",    text_color=color.gray, text_size=size.small)
+table.cell(info, 1, 2, str.tostring(math.round(rsi, 1)), text_color=rsi > 70 ? color.red : rsi < 30 ? color.lime : color.white, text_size=size.small)
+table.cell(info, 0, 3, "ATR",    text_color=color.gray, text_size=size.small)
+table.cell(info, 1, 3, str.tostring(math.round(atr, 4)), text_color=color.white, text_size=size.small)
+table.cell(info, 0, 4, "Daily",  text_color=color.gray, text_size=size.small)
+table.cell(info, 1, 4, tend_alcista ? "ALCISTA" : "BAJISTA", text_color=tend_alcista ? color.lime : color.red, text_size=size.small)
