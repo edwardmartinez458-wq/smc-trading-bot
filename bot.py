@@ -999,12 +999,12 @@ def abrir(simbolo, t, pc, ia):
 
     # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 55)
-    if confianza >= 85:
-        capital_pct = 0.75  # 75% del capital (max)
-    elif confianza >= 70:
-        capital_pct = 0.60  # 60% del capital
+    if confianza >= 70:
+        capital_pct = 1.00  # 100% — alta seguridad
+    elif confianza >= 61:
+        capital_pct = 0.65  # 65%
     else:
-        capital_pct = 0.40  # 40% del capital
+        capital_pct = 0.35  # 35% — minimo
     riesgo_usdt = estado["capital"] * capital_pct * SL_PCT
     log.info(f"{simbolo} — confianza {confianza}% → capital {capital_pct*100:.0f}% | riesgo max ${riesgo_usdt:.2f}")
     g_pot = riesgo_usdt * (TP_PCT / SL_PCT)  # Ganancia potencial proporcional
