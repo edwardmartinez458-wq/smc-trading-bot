@@ -1372,14 +1372,16 @@ def _sincronizar_con_kucoin():
             if float(p.get("currentQty", 0)) != 0
         }
         with lock:
-            antes = len(estado["posiciones"])
-            estado["posiciones"] = [
-                p for p in estado["posiciones"]
-                if p["simbolo"] in simbolos_kucoin
-            ]
-            cerradas = antes - len(estado["posiciones"])
-        if cerradas > 0:
-            log.warning(f"Monitor: {cerradas} posicion(es) cerradas externamente en KuCoin — limpiadas del estado interno")
+            cerradas_ext = [p for p in estado["posiciones"] if p["simbolo"] not in simbolos_kucoin]
+            estado["posiciones"] = [p for p in estado["posiciones"] if p["simbolo"] in simbolos_kucoin]
+        for p in cerradas_ext:
+            pc = precio(p["simbolo"]) or p["entrada"]
+            pnl_est = round((p["entrada"] - pc) * p.get("cantidad",1) * obtener_multiplicador(p["simbolo"]), 2) if p["dir"] == "SHORT" else round((pc - p["entrada"]) * p.get("cantidad",1) * obtener_multiplicador(p["simbolo"]), 2)
+            resultado = "ganado" if pnl_est > 0 else "perdido"
+            guardar_historial(p["simbolo"], p["dir"], p["entrada"], pc, pnl_est, resultado, p.get("confianza_ia", 0))
+            log.warning(f"Monitor: {p['simbolo']} cerrada externamente — PnL est. ${pnl_est}")
+        if cerradas_ext:
+            log.warning(f"Monitor: {len(cerradas_ext)} posicion(es) cerradas externamente en KuCoin — limpiadas del estado interno")
     except Exception as e:
         log.error(f"Sincronizacion KuCoin: {e}")
 
@@ -2078,6 +2080,8 @@ def api_cerrar_manual():
     with lock:
         estado["posiciones"] = [x for x in estado["posiciones"] if x["simbolo"] != simbolo]
     pnl_estimado = round((p["entrada"] - pc) * p.get("cantidad",1) * obtener_multiplicador(simbolo), 2) if p["dir"] == "SHORT" else round((pc - p["entrada"]) * p.get("cantidad",1) * obtener_multiplicador(simbolo), 2)
+    resultado = "ganado" if pnl_estimado > 0 else "perdido"
+    guardar_historial(simbolo, p["dir"], p["entrada"], pc, pnl_estimado, resultado, p.get("confianza_ia", 0))
     log.warning(f"{simbolo} — CIERRE MANUAL desde dashboard | pc=${pc:.4f} | PnL est. ${pnl_estimado}")
     tg(f"CIERRE MANUAL: {simbolo} {p['dir']} @ ${pc:.4f} | PnL est. ${pnl_estimado}")
     return jsonify({"ok": True, "mensaje": f"{simbolo} cerrado manualmente", "pnl": pnl_estimado})
