@@ -186,20 +186,20 @@ def obtener_funding_rate(simbolo: str) -> str:
 # ─── FILTRO TENDENCIA BTC ─────────────────────────────────────────────────────
 
 def actualizar_tendencia_btc():
-    """Actualiza la tendencia de BTC cada 30 min usando EMA200 en 4H"""
+    """Actualiza la tendencia de BTC cada 30 min usando EMA50 en 4H"""
     while True:
         try:
-            df = velas("XBTUSDTM", "240", 210)
-            if not df.empty and len(df) >= 200:
-                ema200 = df["close"].ewm(span=200, adjust=False).mean().iloc[-1]
+            df = velas("XBTUSDTM", "240", 60)
+            if not df.empty and len(df) >= 50:
+                ema50 = df["close"].ewm(span=50, adjust=False).mean().iloc[-1]
                 precio_actual = df["close"].iloc[-1]
-                # Filtro EMA200: precio sobre EMA200 = alcista, bajo = bajista
-                if precio_actual > ema200:
+                # Filtro EMA50: precio sobre EMA50 = alcista, bajo = bajista
+                if precio_actual > ema50:
                     t = "alcista"
-                    log.info(f"BTC sobre EMA200 (${precio_actual:.0f} > ${ema200:.0f}) — tendencia ALCISTA")
+                    log.info(f"BTC sobre EMA50 (${precio_actual:.0f} > ${ema50:.0f}) — tendencia ALCISTA")
                 else:
                     t = "bajista"
-                    log.info(f"BTC bajo EMA200 (${precio_actual:.0f} < ${ema200:.0f}) — tendencia BAJISTA")
+                    log.info(f"BTC bajo EMA50 (${precio_actual:.0f} < ${ema50:.0f}) — tendencia BAJISTA")
                 with lock:
                     estado["tendencia_btc"] = t
         except Exception as e:
