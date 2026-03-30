@@ -43,13 +43,12 @@ PARES = [
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
-TP_PCT         = 0.015  # TP2 fijo 1.5% (salida rapida futuros)
-TP1_PCT        = 0.008  # TP1 fijo 0.8% (asegurar ganancia rapido)
-SL_PCT         = 0.012  # SL fijo 1.2%
-TP_REBOTE      = 0.008  # Rebote: objetivo conservador
-SL_REBOTE      = 0.012  # Rebote: stop ajustado
-TP_BREAKOUT    = 0.015  # Breakout: objetivo
-SL_BREAKOUT    = 0.012  # Breakout: stop ajustado
+TP_PCT         = 0.15
+SL_PCT         = 0.07
+TP_REBOTE      = 0.05   # Rebote contra tendencia: objetivo conservador
+SL_REBOTE      = 0.03   # Rebote contra tendencia: stop ajustado
+TP_BREAKOUT    = 0.05   # Breakout: objetivo conservador
+SL_BREAKOUT    = 0.025  # Breakout: stop muy ajustado
 MAX_POSICIONES = 3
 CB_LIMITE      = 5
 BASE_URL       = "https://api-futures.kucoin.com"
@@ -106,6 +105,10 @@ estado = {
 }
 lock = threading.Lock()
 
+# Posiciones cerradas recientemente por el bot (evita re-agregar en sync por 5 min)
+_cerradas_reciente = {}  # {simbolo: timestamp}
+_CERRADA_TTL = 300  # 5 minutos
+
 # ─── UTILIDADES HORARIO ───────────────────────────────────────────────────────
 
 def hora_chile() -> int:
@@ -115,8 +118,11 @@ def hora_chile() -> int:
     return datetime.now(tz_fija).hour
 
 def en_horario_operacion() -> bool:
-    """Opera 24 horas — sin restriccion de horario"""
-    return True
+    """Retorna True si es horario valido para operar (6am a 2am Chile)"""
+    h = hora_chile()
+    # Operar de 6am a 2am = NO operar de 2am a 6am
+    if 2 <= h < 6:
+        return False
     return True
 
 def reset_sl_diario():
@@ -897,14 +903,6 @@ def guardar_memoria_trade(p: dict, pc: float, resultado: str, pnl: float):
             "pnl_usdt":      round(pnl, 2),
             "leccion":       f"{'GANO' if pnl > 0 else 'PERDIO'} {abs(pnl):.2f} USDT en {resultado}",
         })
-        # Si perdio por SL → guardar patron de error para no repetirlo
-        if resultado == "SL" and p.get("adx_entrada"):
-            guardar_patron_perdida(
-                p["simbolo"],
-                p.get("adx_entrada", 0),
-                p.get("vol_ratio_entrada", 1.0),
-                p.get("hora_entrada", 0),
-            )
         # Guardar solo los ultimos 200 trades
         memoria = memoria[-200:]
         with open(path, "w") as f:
@@ -939,56 +937,6 @@ def leer_memoria_trades(simbolo: str, n: int = 5) -> str:
     except Exception as e:
         log.error(f"Leer memoria: {e}")
         return ""
-
-
-# ─── MEMORIA DE ERRORES — AUTOCORRECCIÓN ──────────────────────────────────────
-
-PATRON_PERDIDA_PATH = "patrones_perdida.json"
-
-def guardar_patron_perdida(simbolo: str, adx: float, vol_ratio: float, hora: int):
-    """Guarda las condiciones tecnicas de un trade perdedor para no repetirlas."""
-    try:
-        patrones = []
-        if os.path.exists(PATRON_PERDIDA_PATH):
-            with open(PATRON_PERDIDA_PATH, "r") as f:
-                patrones = json.load(f)
-        patrones.append({
-            "fecha":     datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "simbolo":   simbolo,
-            "adx":       round(adx, 1),
-            "vol_ratio": round(vol_ratio, 2),
-            "hora":      hora,
-        })
-        patrones = patrones[-150:]
-        with open(PATRON_PERDIDA_PATH, "w") as f:
-            json.dump(patrones, f, indent=2)
-        log.info(f"{simbolo} — Patron perdida guardado: ADX={adx:.1f} vol_ratio={vol_ratio:.2f} hora={hora}h")
-    except Exception as e:
-        log.error(f"Guardar patron perdida: {e}")
-
-
-def verificar_patron_perdida(simbolo: str, adx: float, vol_ratio: float, hora: int) -> bool:
-    """Retorna True si las condiciones actuales coinciden con patrones perdedores previos."""
-    try:
-        if not os.path.exists(PATRON_PERDIDA_PATH):
-            return False
-        with open(PATRON_PERDIDA_PATH, "r") as f:
-            patrones = json.load(f)
-        patrones_par = [p for p in patrones if p["simbolo"] == simbolo]
-        if len(patrones_par) < 3:  # Necesita al menos 3 para ser valido
-            return False
-        coincidencias = 0
-        for p in patrones_par[-15:]:
-            if abs(p["adx"] - adx) <= 5:
-                coincidencias += 1
-            if abs(p["vol_ratio"] - vol_ratio) <= 0.3:
-                coincidencias += 1
-            if abs(p["hora"] - hora) <= 1:
-                coincidencias += 1
-        # Si 6+ coincidencias en los ultimos patrones → es zona peligrosa
-        return coincidencias >= 6
-    except Exception:
-        return False
 
 # ─── SMC ──────────────────────────────────────────────────────────────────────
 
@@ -1239,25 +1187,31 @@ RAZON: una linea breve"""}]
 
 def abrir(simbolo, t, pc, ia):
     lev    = estado["apalancamiento"]
-    lado   = "buy"
-    dir_   = "LONG"
+    lado   = "buy" if t == "alcista" else "sell"
+    dir_   = "LONG" if lado == "buy" else "SHORT"
 
-    # SL/TP fijos para futuros — entradas cortas y rapidas
-    sl  = round(pc * (1 - SL_PCT),  6)
-    tp1 = round(pc * (1 + TP1_PCT), 6)
-    tp2 = round(pc * (1 + TP_PCT),  6)
+    # SL basado en ATR (volatilidad real) — 2x ATR del 4H
+    df_4h_sl = velas(simbolo, "240", 30)
+    atr_val  = calcular_atr(df_4h_sl) if not df_4h_sl.empty else 0
+    sl_dist  = max(atr_val * 2, pc * 0.03)  # minimo 3% si ATR es muy pequeno
+    sl_pct   = sl_dist / pc
+    # TP parcial: TP1 a 1.5x ATR (asegurar ganancia), TP2 a 3x ATR (objetivo final)
+    tp1_dist = max(atr_val * 1.5, pc * 0.015)  # minimo 1.5%
+    tp2_dist = max(atr_val * 3.0, pc * 0.03)   # minimo 3%
+    sl  = round(pc - sl_dist  if lado == "buy" else pc + sl_dist,  6)
+    tp1 = round(pc + tp1_dist if lado == "buy" else pc - tp1_dist, 6)
+    tp2 = round(pc + tp2_dist if lado == "buy" else pc - tp2_dist, 6)
     tp  = tp1  # compatibilidad con resto del codigo
-    sl_pct = SL_PCT
-    log.info(f"{simbolo} — SL ${sl:.4f} (-{SL_PCT*100:.1f}%) | TP1 ${tp1:.4f} (+{TP1_PCT*100:.1f}%) | TP2 ${tp2:.4f} (+{TP_PCT*100:.1f}%)")
+    log.info(f"{simbolo} — ATR {atr_val:.4f} → SL ${sl:.4f} | TP1 ${tp1:.4f} | TP2 ${tp2:.4f}")
 
     # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 55)
-    if confianza >= 76:
-        capital_pct = 1.00  # 100% — muy alta confianza
-    elif confianza >= 62:
+    if confianza >= 70:
+        capital_pct = 1.00  # 100% — alta seguridad
+    elif confianza >= 61:
         capital_pct = 0.65  # 65%
     else:
-        capital_pct = 0.40  # 40% — confianza minima
+        capital_pct = 0.35  # 35% — minimo
     riesgo_usdt = estado["capital"] * capital_pct * sl_pct
     log.info(f"{simbolo} — confianza {confianza}% → capital {capital_pct*100:.0f}% | riesgo max ${riesgo_usdt:.2f}")
     g_pot = riesgo_usdt * (TP_PCT / SL_PCT)
@@ -1276,14 +1230,14 @@ def abrir(simbolo, t, pc, ia):
     sl_oid, tp1_oid = resultado
 
     # Colocar TP2 para la otra mitad
-    close_s = "sell"
+    close_s = "sell" if lado == "buy" else "buy"
     tp2_oid = f"tp2_{int(time.time()*1000)}"
     kc_post("/api/v1/orders", {
         "clientOid":     tp2_oid,
         "symbol":        simbolo,
         "side":          close_s,
         "type":          "market",
-        "stop":          "up",
+        "stop":          "up" if lado == "buy" else "down",
         "stopPrice":     str(tp2),
         "stopPriceType": "MP",
         "size":          cant_tp2,
@@ -1310,12 +1264,9 @@ def abrir(simbolo, t, pc, ia):
             "margen":       margen,
             "g_pot":        round(g_pot, 2),
             "p_pot":        round(p_pot, 2),
-            "confianza_ia":     ia["confianza"],
-            "adx_entrada":      ia.get("adx_entrada", 0),
-            "vol_ratio_entrada":ia.get("vol_ratio_entrada", 1.0),
-            "hora_entrada":     ia.get("hora_entrada", 0),
-            "tipo":             "regular",
-            "ts":               datetime.now().isoformat(),
+            "confianza_ia": ia["confianza"],
+            "tipo":         "regular",
+            "ts":           datetime.now().isoformat(),
         })
         estado["ops_total"] += 1
 
@@ -1408,34 +1359,6 @@ def _cerrar_posicion(p: dict, pc: float):
         tp_ok = False
         sl_ok = True  # se trata como SL para el calculo de PnL real
 
-    # Salida dinámica: guardar ganancia si hay señales de reversión (cada 5 min)
-    if not (tp_ok or sl_ok):
-        entrada_p = p["entrada"]
-        ganancia_pct = (pc - entrada_p) / entrada_p if p["dir"] == "LONG" else (entrada_p - pc) / entrada_p
-        ahora_t = time.time()
-        if ganancia_pct > 0.003 and (ahora_t - p.get("ultimo_check_dinamico", 0)) > 300:
-            p["ultimo_check_dinamico"] = ahora_t
-            df_sd = velas(p["simbolo"], "240", 100)
-            if not df_sd.empty:
-                senales = 0
-                ema21_sd = df_sd["close"].ewm(span=21, adjust=False).mean().iloc[-1]
-                ema89_sd = df_sd["close"].ewm(span=89, adjust=False).mean().iloc[-1]
-                if p["dir"] == "LONG" and ema21_sd <= ema89_sd:
-                    senales += 1
-                    log.info(f"{p['simbolo']} — SD: EMA cruce bajista detectado")
-                adx_sd = calcular_adx(df_sd)
-                if adx_sd < 20:
-                    senales += 1
-                    log.info(f"{p['simbolo']} — SD: ADX={adx_sd:.1f} perdiendo fuerza")
-                vol_u_sd = df_sd["volume"].iloc[-1]
-                vol_p_sd = df_sd["volume"].iloc[-21:-1].mean()
-                if vol_u_sd < vol_p_sd * 0.7:
-                    senales += 1
-                    log.info(f"{p['simbolo']} — SD: volumen caido al {vol_u_sd/vol_p_sd*100:.0f}%")
-                if senales >= 2:
-                    log.info(f"{p['simbolo']} — SALIDA DINAMICA: {senales} señales, ganancia +{ganancia_pct*100:.2f}%")
-                    tp_ok = True
-
     if not (tp_ok or sl_ok):
         return
 
@@ -1443,6 +1366,7 @@ def _cerrar_posicion(p: dict, pc: float):
         if p not in estado["posiciones"]:
             return
         estado["posiciones"].remove(p)
+        _cerradas_reciente[p["simbolo"]] = time.time()  # marcar para evitar re-sync
 
         # Cancelar orden TP en KuCoin si cerramos por SL o tendencia
         if not tp_ok and p.get("tp_oid"):
@@ -1493,9 +1417,6 @@ def _cerrar_posicion(p: dict, pc: float):
         sim = p["simbolo"]
         def reentrada_reversion(s=sim):
             time.sleep(2 * 60)
-            with lock:
-                if estado["circuit_breaker"]:
-                    return
             log.info(f"{s} — re-evaluando tras cambio de tendencia")
             analizar(s)
         threading.Thread(target=reentrada_reversion, daemon=True).start()
@@ -1540,9 +1461,19 @@ def _sincronizar_con_kucoin():
         # 2) Agregar posiciones de KuCoin que el bot no esta rastreando
         with lock:
             simbolos_bot = {p["simbolo"] for p in estado["posiciones"]}
+        # Limpiar entradas expiradas del set de cerradas recientes
+        ahora = time.time()
+        expiradas = [s for s, t in _cerradas_reciente.items() if ahora - t > _CERRADA_TTL]
+        for s in expiradas:
+            del _cerradas_reciente[s]
+
         for pk in pos_data:
             simbolo = pk.get("symbol", "")
             if simbolo in simbolos_bot:
+                continue
+            # Si el bot cerró esta posición recientemente, ignorar por 5 min
+            if simbolo in _cerradas_reciente:
+                log.info(f"Sync: ignorando {simbolo} — cerrada recientemente por el bot (esperando ejecucion en KuCoin)")
                 continue
             qty     = float(pk.get("currentQty", 0))
             dir_    = "LONG" if qty > 0 else "SHORT"
@@ -1576,6 +1507,7 @@ def _sincronizar_con_kucoin():
                     "g_pot": 0, "p_pot": 0, "confianza_ia": 0,
                     "tipo": "recuperada", "ts": datetime.now().isoformat(),
                 })
+                estado["ops_total"] += 1  # contar para que WR no sea 0/0
             log.warning(f"Sync: POSICION RECUPERADA {simbolo} {dir_} entrada=${entrada:.4f} sl=${sl} tp=${tp}")
             tg(f"POSICION RECUPERADA: {simbolo} {dir_} @ ${entrada:.4f} | SL ${sl} | TP ${tp}")
 
@@ -1804,75 +1736,61 @@ def abrir_breakout(simbolo, pc, ia):
 
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
-def _trade_ema_rsi(simbolo, pc, df_4h):
-    """Estrategia: EMA21 + EMA89 en 4H — solo LONG."""
+def _trade_ema_rsi(simbolo, t, pc, df_4h):
+    """Nueva estrategia: EMA21 + EMA89 + RSI14 en 4H (mas simple y medible)."""
     if len(df_4h) < 90:
         log.info(f"{simbolo} — sin suficientes velas 4H para EMA89")
         return
 
-    # Calcular EMAs
+    # Calcular EMA21 y EMA89
     ema21 = df_4h["close"].ewm(span=21, adjust=False).mean()
     ema89 = df_4h["close"].ewm(span=89, adjust=False).mean()
+    rsi   = calcular_rsi(df_4h)
 
     ema21_v = ema21.iloc[-1]
     ema89_v = ema89.iloc[-1]
 
-    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f}")
+    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} RSI={rsi:.1f}")
 
-    # Filtro 1: EMA21 > EMA89 (tendencia alcista 4H)
-    if ema21_v <= ema89_v:
-        log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89")
+    # Filtro tendencia BTC alineada
+    if not filtro_tendencia_btc(t):
+        log.info(f"{simbolo} — RECHAZADO: filtro BTC (par={t}, BTC={estado['tendencia_btc']})")
         return
 
-    # Filtro 2: precio sobre EMA21 (zona de compra)
-    if pc < ema21_v:
-        log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
-        return
+    # LONG: EMA21 > EMA89 + RSI entre 45-70 + precio sobre EMA21
+    if t == "alcista":
+        if ema21_v <= ema89_v:
+            log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin tendencia alcista 4H)")
+            return
+        if rsi < 45 or rsi > 70:
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (45-70)")
+            return
+        if pc < ema21_v:
+            log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
+            return
 
-    # Filtro 3: ADX > 25 (tendencia real, evita entradas en mercado lateral)
-    adx = calcular_adx(df_4h)
-    if adx < 25:
-        log.info(f"{simbolo} — RECHAZADO: ADX={adx:.1f} < 25 (mercado lateral)")
-        return
+    # SHORT: EMA21 < EMA89 + RSI entre 30-55 + precio bajo EMA21
+    elif t == "bajista":
+        if ema21_v >= ema89_v:
+            log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin tendencia bajista 4H)")
+            return
+        if rsi > 55 or rsi < 30:
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (30-55)")
+            return
+        if pc > ema21_v:
+            log.info(f"{simbolo} — RECHAZADO: precio sobre EMA21 (pc=${pc:.4f} > ${ema21_v:.4f})")
+            return
 
-    # Filtro 4: Volumen de confirmación (última vela > promedio últimas 20)
-    vol_ultimo   = df_4h["volume"].iloc[-1]
-    vol_promedio = df_4h["volume"].iloc[-21:-1].mean()
-    if vol_ultimo < vol_promedio:
-        log.info(f"{simbolo} — RECHAZADO: volumen bajo (vol={vol_ultimo:.0f} < avg={vol_promedio:.0f})")
-        return
-
-    # Filtro 5: Sin movimiento explosivo en BTC (>5% en última vela 4H)
-    if simbolo != "XBTUSDTM":
-        df_btc = velas("XBTUSDTM", "240", 5)
-        if not df_btc.empty:
-            ultima_btc = df_btc.iloc[-1]
-            cambio_btc = abs(ultima_btc["close"] - ultima_btc["open"]) / ultima_btc["open"] * 100
-            if cambio_btc > 5:
-                log.info(f"{simbolo} — RECHAZADO: BTC movimiento explosivo {cambio_btc:.1f}% en 4H")
-                return
-
-    # Filtro 6: Memoria de errores — no repetir condiciones que ya perdieron
-    vol_ratio = vol_ultimo / vol_promedio if vol_promedio > 0 else 1.0
-    if verificar_patron_perdida(simbolo, adx, vol_ratio, hora_chile()):
-        log.info(f"{simbolo} — RECHAZADO: patron de perdida previo (ADX={adx:.1f} vol={vol_ratio:.2f})")
-        return
-
-    log.info(f"{simbolo} — Todos los filtros OK — consultando IA...")
+    log.info(f"{simbolo} — EMA+RSI OK — consultando IA...")
     ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
-    ia = filtro_ia(simbolo, "alcista", pc, ob_ctx, 0)
+    ia = filtro_ia(simbolo, t, pc, ob_ctx, 0)
 
     if not ia["entrar"]:
         log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
         return
 
-    # Guardar condiciones tecnicas en ia para memoria de errores
-    ia["adx_entrada"]       = round(adx, 1)
-    ia["vol_ratio_entrada"] = round(vol_ratio, 2)
-    ia["hora_entrada"]      = hora_chile()
-
-    log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO LONG")
-    abrir(simbolo, "alcista", pc, ia)
+    log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
+    abrir(simbolo, t, pc, ia)
 
 
 def analizar(simbolo: str):
@@ -1903,10 +1821,14 @@ def analizar(simbolo: str):
         log.info(f"{simbolo} — sin precio")
         return
 
-    log.info(f"{simbolo} — precio: ${pc:.4f}")
+    t = tendencia(df_d)
+    log.info(f"{simbolo} — tendencia Daily: {t} | precio: ${pc:.4f}")
+    if t == "lateral":
+        log.info(f"{simbolo} — RECHAZADO: tendencia lateral")
+        return
 
-    # --- Flujo principal: EMA21 + EMA89 + EMA200 ---
-    _trade_ema_rsi(simbolo, pc, df_4h)
+    # --- Flujo principal: trade EMA21 + EMA89 + RSI14 ---
+    _trade_ema_rsi(simbolo, t, pc, df_4h)
 
     with lock:
         tiene_pos = any(p["simbolo"] == simbolo for p in estado["posiciones"])
@@ -2389,11 +2311,8 @@ def main():
 
         recalcular_capital()
 
-        with lock:
-            pausado = estado["circuit_breaker"]
-        if pausado:
-            log.info("Bot pausado — ciclo sin operar")
-        elif not en_horario_operacion():
+        # Verificar horario antes de analizar
+        if not en_horario_operacion():
             log.info(f"Fuera de horario ({hora_chile()}h Chile) — esperando 6am, sin operar")
         else:
             for s in estado["pares_activos"]:
