@@ -513,60 +513,6 @@ def monitor_trump():
 
         time.sleep(10 * 60)
 
-# ─── SEC MONITOR ──────────────────────────────────────────────────────────────
-
-SEC_KEYWORDS = [
-    "bitcoin", "crypto", "ethereum", "etf", "blockchain", "coinbase",
-    "binance", "ripple", "xrp", "digital asset", "token", "defi", "sec"
-]
-
-def monitor_sec():
-    time.sleep(60)
-    ultimo_id = ""
-    while True:
-        try:
-            import re as _re
-            url = "https://news.google.com/rss/search?q=SEC+crypto+bitcoin+regulation&hl=en-US&gl=US&ceid=US:en"
-            r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code == 200:
-                items = r.text.split("<item>")[1:4]
-                for item in items:
-                    guid   = item.split("<guid>")[1].split("</guid>")[0].strip() if "<guid>" in item else ""
-                    titulo = _re.sub(r"<[^>]+>", "", item.split("<title>")[1].split("</title>")[0]).strip() if "<title>" in item else ""
-                    if guid and guid != ultimo_id and any(kw in titulo.lower() for kw in SEC_KEYWORDS):
-                        ultimo_id = guid
-                        log.info(f"SEC NOTICIA: {titulo[:100]}")
-                        tg(f"⚖️ <b>SEC / REGULACION</b>\n\n{titulo}\n\n<i>Puede mover el mercado — revisar posiciones</i>")
-                        break
-        except Exception as e:
-            log.error(f"Monitor SEC: {e}")
-        time.sleep(20 * 60)
-
-# ─── CPI MONITOR ──────────────────────────────────────────────────────────────
-
-def monitor_cpi():
-    time.sleep(90)
-    ultimo_id = ""
-    while True:
-        try:
-            import re as _re
-            url = "https://news.google.com/rss/search?q=CPI+inflation+data+US&hl=en-US&gl=US&ceid=US:en"
-            r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code == 200:
-                items = r.text.split("<item>")[1:4]
-                for item in items:
-                    guid   = item.split("<guid>")[1].split("</guid>")[0].strip() if "<guid>" in item else ""
-                    titulo = _re.sub(r"<[^>]+>", "", item.split("<title>")[1].split("</title>")[0]).strip() if "<title>" in item else ""
-                    kws    = ["cpi", "inflation", "consumer price", "core inflation", "pce"]
-                    if guid and guid != ultimo_id and any(kw in titulo.lower() for kw in kws):
-                        ultimo_id = guid
-                        log.info(f"CPI NOTICIA: {titulo[:100]}")
-                        tg(f"📊 <b>CPI / INFLACION</b>\n\n{titulo}\n\n<i>Dato macro — BTC suele moverse 3-8% en proximas horas</i>")
-                        break
-        except Exception as e:
-            log.error(f"Monitor CPI: {e}")
-        time.sleep(30 * 60)
-
 # ─── LIQUIDACIONES MONITOR ────────────────────────────────────────────────────
 
 def monitor_liquidaciones():
@@ -2033,11 +1979,9 @@ def main():
     threading.Thread(target=monitor_fed,           daemon=True, name="FedMonitor").start()
     threading.Thread(target=actualizar_tendencia_btc, daemon=True, name="BTCTrend").start()
     threading.Thread(target=reset_sl_diario,       daemon=True, name="SLDiario").start()
-    threading.Thread(target=monitor_sec,           daemon=True, name="SECMonitor").start()
-    threading.Thread(target=monitor_cpi,           daemon=True, name="CPIMonitor").start()
     threading.Thread(target=monitor_liquidaciones, daemon=True, name="LiqMonitor").start()
     threading.Thread(target=monitor_ballenas,      daemon=True, name="BallenaMonitor").start()
-    log.info("Hilos iniciados: TelegramPoller, PosMonitor, Dashboard, TrumpMonitor, FedMonitor, BTCTrend, SLDiario, SECMonitor, CPIMonitor, LiqMonitor, BallenaMonitor")
+    log.info("Hilos iniciados: TelegramPoller, PosMonitor, Dashboard, TrumpMonitor, FedMonitor, BTCTrend, SLDiario, LiqMonitor, BallenaMonitor")
 
     ultimo_reporte = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
