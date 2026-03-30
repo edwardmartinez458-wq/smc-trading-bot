@@ -1721,33 +1721,26 @@ def abrir_breakout(simbolo, pc, ia):
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
 def _trade_ema_rsi(simbolo, pc, df_4h):
-    """Estrategia: EMA21 + EMA89 + EMA200 en 4H — solo LONG."""
-    if len(df_4h) < 200:
-        log.info(f"{simbolo} — sin suficientes velas 4H para EMA200")
+    """Estrategia: EMA21 + EMA89 en 4H — solo LONG."""
+    if len(df_4h) < 90:
+        log.info(f"{simbolo} — sin suficientes velas 4H para EMA89")
         return
 
     # Calcular EMAs
-    ema21  = df_4h["close"].ewm(span=21,  adjust=False).mean()
-    ema89  = df_4h["close"].ewm(span=89,  adjust=False).mean()
-    ema200 = df_4h["close"].ewm(span=200, adjust=False).mean()
+    ema21 = df_4h["close"].ewm(span=21, adjust=False).mean()
+    ema89 = df_4h["close"].ewm(span=89, adjust=False).mean()
 
-    ema21_v  = ema21.iloc[-1]
-    ema89_v  = ema89.iloc[-1]
-    ema200_v = ema200.iloc[-1]
+    ema21_v = ema21.iloc[-1]
+    ema89_v = ema89.iloc[-1]
 
-    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} EMA200=${ema200_v:.4f}")
+    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f}")
 
     # Filtro 1: EMA21 > EMA89 (tendencia alcista 4H)
     if ema21_v <= ema89_v:
         log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89")
         return
 
-    # Filtro 2: precio sobre EMA200 (tendencia macro alcista)
-    if pc < ema200_v:
-        log.info(f"{simbolo} — RECHAZADO: precio bajo EMA200 (pc=${pc:.4f} < ${ema200_v:.4f})")
-        return
-
-    # Filtro 3: precio sobre EMA21 (zona de compra)
+    # Filtro 2: precio sobre EMA21 (zona de compra)
     if pc < ema21_v:
         log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
         return
