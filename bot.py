@@ -897,6 +897,14 @@ def guardar_memoria_trade(p: dict, pc: float, resultado: str, pnl: float):
             "pnl_usdt":      round(pnl, 2),
             "leccion":       f"{'GANO' if pnl > 0 else 'PERDIO'} {abs(pnl):.2f} USDT en {resultado}",
         })
+        # Si perdio por SL → guardar patron de error para no repetirlo
+        if resultado == "SL" and p.get("adx_entrada"):
+            guardar_patron_perdida(
+                p["simbolo"],
+                p.get("adx_entrada", 0),
+                p.get("vol_ratio_entrada", 1.0),
+                p.get("hora_entrada", 0),
+            )
         # Guardar solo los ultimos 200 trades
         memoria = memoria[-200:]
         with open(path, "w") as f:
@@ -931,6 +939,56 @@ def leer_memoria_trades(simbolo: str, n: int = 5) -> str:
     except Exception as e:
         log.error(f"Leer memoria: {e}")
         return ""
+
+
+# ─── MEMORIA DE ERRORES — AUTOCORRECCIÓN ──────────────────────────────────────
+
+PATRON_PERDIDA_PATH = "patrones_perdida.json"
+
+def guardar_patron_perdida(simbolo: str, adx: float, vol_ratio: float, hora: int):
+    """Guarda las condiciones tecnicas de un trade perdedor para no repetirlas."""
+    try:
+        patrones = []
+        if os.path.exists(PATRON_PERDIDA_PATH):
+            with open(PATRON_PERDIDA_PATH, "r") as f:
+                patrones = json.load(f)
+        patrones.append({
+            "fecha":     datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "simbolo":   simbolo,
+            "adx":       round(adx, 1),
+            "vol_ratio": round(vol_ratio, 2),
+            "hora":      hora,
+        })
+        patrones = patrones[-150:]
+        with open(PATRON_PERDIDA_PATH, "w") as f:
+            json.dump(patrones, f, indent=2)
+        log.info(f"{simbolo} — Patron perdida guardado: ADX={adx:.1f} vol_ratio={vol_ratio:.2f} hora={hora}h")
+    except Exception as e:
+        log.error(f"Guardar patron perdida: {e}")
+
+
+def verificar_patron_perdida(simbolo: str, adx: float, vol_ratio: float, hora: int) -> bool:
+    """Retorna True si las condiciones actuales coinciden con patrones perdedores previos."""
+    try:
+        if not os.path.exists(PATRON_PERDIDA_PATH):
+            return False
+        with open(PATRON_PERDIDA_PATH, "r") as f:
+            patrones = json.load(f)
+        patrones_par = [p for p in patrones if p["simbolo"] == simbolo]
+        if len(patrones_par) < 3:  # Necesita al menos 3 para ser valido
+            return False
+        coincidencias = 0
+        for p in patrones_par[-15:]:
+            if abs(p["adx"] - adx) <= 5:
+                coincidencias += 1
+            if abs(p["vol_ratio"] - vol_ratio) <= 0.3:
+                coincidencias += 1
+            if abs(p["hora"] - hora) <= 1:
+                coincidencias += 1
+        # Si 6+ coincidencias en los ultimos patrones → es zona peligrosa
+        return coincidencias >= 6
+    except Exception:
+        return False
 
 # ─── SMC ──────────────────────────────────────────────────────────────────────
 
@@ -1252,9 +1310,12 @@ def abrir(simbolo, t, pc, ia):
             "margen":       margen,
             "g_pot":        round(g_pot, 2),
             "p_pot":        round(p_pot, 2),
-            "confianza_ia": ia["confianza"],
-            "tipo":         "regular",
-            "ts":           datetime.now().isoformat(),
+            "confianza_ia":     ia["confianza"],
+            "adx_entrada":      ia.get("adx_entrada", 0),
+            "vol_ratio_entrada":ia.get("vol_ratio_entrada", 1.0),
+            "hora_entrada":     ia.get("hora_entrada", 0),
+            "tipo":             "regular",
+            "ts":               datetime.now().isoformat(),
         })
         estado["ops_total"] += 1
 
@@ -1346,6 +1407,34 @@ def _cerrar_posicion(p: dict, pc: float):
         log.info(f"{p['simbolo']} — CIERRE por cambio tendencia BTC ({t_btc}) contra {p['dir']}")
         tp_ok = False
         sl_ok = True  # se trata como SL para el calculo de PnL real
+
+    # Salida dinámica: guardar ganancia si hay señales de reversión (cada 5 min)
+    if not (tp_ok or sl_ok):
+        entrada_p = p["entrada"]
+        ganancia_pct = (pc - entrada_p) / entrada_p if p["dir"] == "LONG" else (entrada_p - pc) / entrada_p
+        ahora_t = time.time()
+        if ganancia_pct > 0.003 and (ahora_t - p.get("ultimo_check_dinamico", 0)) > 300:
+            p["ultimo_check_dinamico"] = ahora_t
+            df_sd = velas(p["simbolo"], "240", 100)
+            if not df_sd.empty:
+                senales = 0
+                ema21_sd = df_sd["close"].ewm(span=21, adjust=False).mean().iloc[-1]
+                ema89_sd = df_sd["close"].ewm(span=89, adjust=False).mean().iloc[-1]
+                if p["dir"] == "LONG" and ema21_sd <= ema89_sd:
+                    senales += 1
+                    log.info(f"{p['simbolo']} — SD: EMA cruce bajista detectado")
+                adx_sd = calcular_adx(df_sd)
+                if adx_sd < 20:
+                    senales += 1
+                    log.info(f"{p['simbolo']} — SD: ADX={adx_sd:.1f} perdiendo fuerza")
+                vol_u_sd = df_sd["volume"].iloc[-1]
+                vol_p_sd = df_sd["volume"].iloc[-21:-1].mean()
+                if vol_u_sd < vol_p_sd * 0.7:
+                    senales += 1
+                    log.info(f"{p['simbolo']} — SD: volumen caido al {vol_u_sd/vol_p_sd*100:.0f}%")
+                if senales >= 2:
+                    log.info(f"{p['simbolo']} — SALIDA DINAMICA: {senales} señales, ganancia +{ganancia_pct*100:.2f}%")
+                    tp_ok = True
 
     if not (tp_ok or sl_ok):
         return
@@ -1763,13 +1852,24 @@ def _trade_ema_rsi(simbolo, pc, df_4h):
                 log.info(f"{simbolo} — RECHAZADO: BTC movimiento explosivo {cambio_btc:.1f}% en 4H")
                 return
 
-    log.info(f"{simbolo} — EMAs+ADX+Vol+BTC OK — consultando IA...")
+    # Filtro 6: Memoria de errores — no repetir condiciones que ya perdieron
+    vol_ratio = vol_ultimo / vol_promedio if vol_promedio > 0 else 1.0
+    if verificar_patron_perdida(simbolo, adx, vol_ratio, hora_chile()):
+        log.info(f"{simbolo} — RECHAZADO: patron de perdida previo (ADX={adx:.1f} vol={vol_ratio:.2f})")
+        return
+
+    log.info(f"{simbolo} — Todos los filtros OK — consultando IA...")
     ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
     ia = filtro_ia(simbolo, "alcista", pc, ob_ctx, 0)
 
     if not ia["entrar"]:
         log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
         return
+
+    # Guardar condiciones tecnicas en ia para memoria de errores
+    ia["adx_entrada"]       = round(adx, 1)
+    ia["vol_ratio_entrada"] = round(vol_ratio, 2)
+    ia["hora_entrada"]      = hora_chile()
 
     log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO LONG")
     abrir(simbolo, "alcista", pc, ia)
