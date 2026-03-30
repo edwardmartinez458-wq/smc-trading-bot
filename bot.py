@@ -1734,47 +1734,6 @@ def abrir_breakout(simbolo, pc, ia):
     log.info(f"{simbolo} [BREAKOUT] posicion abierta | ops_total={estado['ops_total']}")
 
 
-# ─── COORDINACIÓN CRUZADA CON SHORT BOT ──────────────────────────────────────
-
-SHORT_BOT_URL = "https://smc-short-bot-production.up.railway.app"
-MAPA_KC_BX    = {"XBTUSDTM": "BTC-USDT", "ETHUSDTM": "ETH-USDT", "SOLUSDTM": "SOL-USDT", "XRPUSDTM": "XRP-USDT"}
-
-def short_bot_posicion_info(simbolo: str) -> dict:
-    """Retorna info de la posicion SHORT abierta en el par. {} si no hay."""
-    simbolo_bx = MAPA_KC_BX.get(simbolo)
-    if not simbolo_bx:
-        return {}
-    try:
-        r = requests.get(f"{SHORT_BOT_URL}/api/estado", timeout=5)
-        d = r.json()
-        for p in d.get("posiciones", []):
-            if p.get("simbolo") == simbolo_bx:
-                return p
-    except Exception:
-        pass
-    return {}
-
-def cerrar_short_bot(simbolo: str) -> bool:
-    """Envia señal al bot SHORT para cerrar posicion cuando LONG detecta subida fuerte."""
-    simbolo_bx = MAPA_KC_BX.get(simbolo)
-    if not simbolo_bx:
-        return False
-    try:
-        r = requests.post(
-            f"{SHORT_BOT_URL}/api/cerrar_manual",
-            json={"simbolo": simbolo_bx},
-            timeout=8
-        )
-        d = r.json()
-        if d.get("ok"):
-            log.info(f"{simbolo} — SHORT bot cerró {simbolo_bx} por señal LONG ✅")
-            return True
-        else:
-            log.warning(f"{simbolo} — SHORT bot no pudo cerrar {simbolo_bx}: {d.get('error')}")
-    except Exception as e:
-        log.error(f"{simbolo} — Error cerrando SHORT bot: {e}")
-    return False
-
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
 def _trade_ema_rsi(simbolo, t, pc, df_4h):
@@ -1830,24 +1789,6 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
         return
 
-    # Comunicación cruzada: si SHORT bot tiene este par abierto con ganancia → cerrar antes de entrar LONG
-    if t == "alcista":
-        pos_short = short_bot_posicion_info(simbolo)
-        if pos_short:
-            entrada_short = pos_short.get("entrada", pc)
-            pnl_pct = (entrada_short - pc) / entrada_short if entrada_short > 0 else 0
-            if pnl_pct > 0:
-                log.info(f"{simbolo} — SHORT abierto con +{pnl_pct*100:.2f}% ganancia — cerrando antes de LONG")
-                cerrado = cerrar_short_bot(simbolo)
-                if cerrado:
-                    tg(f"🔄 COORDINACION: LONG detectó subida en {simbolo}\nSHORT cerrado con +{pnl_pct*100:.2f}% ganancia salvada\nAbriendo LONG...")
-                else:
-                    log.warning(f"{simbolo} — No se pudo cerrar SHORT bot, cancelando LONG por seguridad")
-                    return
-            else:
-                log.info(f"{simbolo} — SHORT abierto pero en perdida ({pnl_pct*100:.2f}%), LONG bloqueado")
-                return
-
     log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
     abrir(simbolo, t, pc, ia)
 
@@ -1894,13 +1835,8 @@ def analizar(simbolo: str):
     if tiene_pos:
         return
 
-    # --- Flujo secundario: rebote contra tendencia ---
-    _check_rebote(simbolo, t, df_4h, df_1h, pc)
-
-    with lock:
-        tiene_pos = any(p["simbolo"] == simbolo for p in estado["posiciones"])
-    if tiene_pos:
-        return
+    # --- Flujo secundario: rebote contra tendencia --- DESACTIVADO
+    # _check_rebote(simbolo, t, df_4h, df_1h, pc)
 
     # --- Flujo terciario: breakout con volumen ---
     bk = detectar_breakout(simbolo, pc)
