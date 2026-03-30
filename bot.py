@@ -43,12 +43,13 @@ PARES = [
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
-TP_PCT         = 0.15
-SL_PCT         = 0.07
-TP_REBOTE      = 0.05   # Rebote contra tendencia: objetivo conservador
-SL_REBOTE      = 0.03   # Rebote contra tendencia: stop ajustado
-TP_BREAKOUT    = 0.05   # Breakout: objetivo conservador
-SL_BREAKOUT    = 0.025  # Breakout: stop muy ajustado
+TP_PCT         = 0.015  # TP2 fijo 1.5% (salida rapida futuros)
+TP1_PCT        = 0.008  # TP1 fijo 0.8% (asegurar ganancia rapido)
+SL_PCT         = 0.012  # SL fijo 1.2%
+TP_REBOTE      = 0.008  # Rebote: objetivo conservador
+SL_REBOTE      = 0.012  # Rebote: stop ajustado
+TP_BREAKOUT    = 0.015  # Breakout: objetivo
+SL_BREAKOUT    = 0.012  # Breakout: stop ajustado
 MAX_POSICIONES = 3
 CB_LIMITE      = 5
 BASE_URL       = "https://api-futures.kucoin.com"
@@ -1183,19 +1184,13 @@ def abrir(simbolo, t, pc, ia):
     lado   = "buy"
     dir_   = "LONG"
 
-    # SL basado en ATR (volatilidad real) — 2x ATR del 4H
-    df_4h_sl = velas(simbolo, "240", 30)
-    atr_val  = calcular_atr(df_4h_sl) if not df_4h_sl.empty else 0
-    sl_dist  = max(atr_val * 2, pc * 0.03)  # minimo 3% si ATR es muy pequeno
-    sl_pct   = sl_dist / pc
-    # TP parcial: TP1 a 1.5x ATR (asegurar ganancia), TP2 a 3x ATR (objetivo final)
-    tp1_dist = max(atr_val * 1.5, pc * 0.015)  # minimo 1.5%
-    tp2_dist = max(atr_val * 3.0, pc * 0.03)   # minimo 3%
-    sl  = round(pc - sl_dist,  6)
-    tp1 = round(pc + tp1_dist, 6)
-    tp2 = round(pc + tp2_dist, 6)
+    # SL/TP fijos para futuros — entradas cortas y rapidas
+    sl  = round(pc * (1 - SL_PCT),  6)
+    tp1 = round(pc * (1 + TP1_PCT), 6)
+    tp2 = round(pc * (1 + TP_PCT),  6)
     tp  = tp1  # compatibilidad con resto del codigo
-    log.info(f"{simbolo} — ATR {atr_val:.4f} → SL ${sl:.4f} | TP1 ${tp1:.4f} | TP2 ${tp2:.4f}")
+    sl_pct = SL_PCT
+    log.info(f"{simbolo} — SL ${sl:.4f} (-{SL_PCT*100:.1f}%) | TP1 ${tp1:.4f} (+{TP1_PCT*100:.1f}%) | TP2 ${tp2:.4f} (+{TP_PCT*100:.1f}%)")
 
     # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 55)
