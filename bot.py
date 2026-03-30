@@ -1745,7 +1745,30 @@ def _trade_ema_rsi(simbolo, pc, df_4h):
         log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
         return
 
-    log.info(f"{simbolo} — EMAs OK — consultando IA...")
+    # Filtro 3: ADX > 25 (tendencia real, evita entradas en mercado lateral)
+    adx = calcular_adx(df_4h)
+    if adx < 25:
+        log.info(f"{simbolo} — RECHAZADO: ADX={adx:.1f} < 25 (mercado lateral)")
+        return
+
+    # Filtro 4: Volumen de confirmación (última vela > promedio últimas 20)
+    vol_ultimo   = df_4h["volume"].iloc[-1]
+    vol_promedio = df_4h["volume"].iloc[-21:-1].mean()
+    if vol_ultimo < vol_promedio:
+        log.info(f"{simbolo} — RECHAZADO: volumen bajo (vol={vol_ultimo:.0f} < avg={vol_promedio:.0f})")
+        return
+
+    # Filtro 5: Sin movimiento explosivo en BTC (>5% en última vela 4H)
+    if simbolo != "XBTUSDTM":
+        df_btc = velas("XBTUSDTM", "240", 5)
+        if not df_btc.empty:
+            ultima_btc = df_btc.iloc[-1]
+            cambio_btc = abs(ultima_btc["close"] - ultima_btc["open"]) / ultima_btc["open"] * 100
+            if cambio_btc > 5:
+                log.info(f"{simbolo} — RECHAZADO: BTC movimiento explosivo {cambio_btc:.1f}% en 4H")
+                return
+
+    log.info(f"{simbolo} — EMAs+ADX+Vol+BTC OK — consultando IA...")
     ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
     ia = filtro_ia(simbolo, "alcista", pc, ob_ctx, 0)
 
