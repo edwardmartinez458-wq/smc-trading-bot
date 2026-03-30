@@ -19,204 +19,106 @@
     --card: #0f0f1c;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Syne', sans-serif;
-    min-height: 100vh;
-  }
+  body { background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif; min-height: 100vh; }
 
-  /* HEADER */
   header {
     position: sticky; top: 0; z-index: 100;
-    background: rgba(8,8,16,0.95);
-    backdrop-filter: blur(20px);
+    background: rgba(8,8,16,0.95); backdrop-filter: blur(20px);
     border-bottom: 1px solid var(--border);
     padding: 0 1.25rem;
     display: flex; align-items: center; justify-content: space-between;
     height: 56px;
   }
-  .logo {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.85rem; font-weight: 700;
-    letter-spacing: 0.15em; color: var(--accent);
-    display: flex; align-items: center; gap: 8px;
-  }
-  .pulse {
-    width: 8px; height: 8px;
-    background: var(--accent); border-radius: 50%;
-    animation: pulse 2s infinite;
-  }
-  @keyframes pulse {
-    0%,100% { opacity:1; box-shadow: 0 0 0 0 rgba(0,255,157,0.4); }
-    50% { opacity:0.6; box-shadow: 0 0 0 6px rgba(0,255,157,0); }
-  }
-  .header-right { display:flex; align-items:center; gap:1rem; }
-  .badge {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.65rem; padding: 3px 10px;
-    border-radius: 20px; border: 1px solid var(--accent);
-    color: var(--accent); letter-spacing: 0.1em;
-  }
+  .logo { font-family: 'Space Mono', monospace; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.15em; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+  .pulse { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; animation: pulse 2s infinite; }
+  .pulse.red { background: var(--red); }
+  @keyframes pulse { 0%,100% { opacity:1; box-shadow: 0 0 0 0 rgba(0,255,157,0.4); } 50% { opacity:0.6; box-shadow: 0 0 0 6px rgba(0,255,157,0); } }
+  .header-right { display:flex; align-items:center; gap:1.5rem; }
+  .header-bot { display:flex; align-items:center; gap:0.5rem; font-family:'Space Mono',monospace; font-size:0.62rem; }
+  .badge { font-family: 'Space Mono', monospace; font-size: 0.65rem; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--accent); color: var(--accent); letter-spacing: 0.1em; }
   .badge.offline { border-color: var(--red); color: var(--red); }
+  .badge.red { border-color: var(--red); color: var(--red); }
   #last-update { font-family: 'Space Mono', monospace; font-size: 0.6rem; color: var(--muted); }
 
-  /* MAIN */
-  main { max-width: 1400px; margin: 0 auto; padding: 1.25rem; }
+  main { max-width: 1600px; margin: 0 auto; padding: 1rem; }
 
-  /* CONTROLS */
-  .controls { display:flex; gap:0.6rem; margin-bottom:1.25rem; flex-wrap:wrap; }
-  .btn {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.65rem; letter-spacing: 0.08em;
-    padding: 9px 18px; border-radius: 8px; border: 1px solid;
-    cursor: pointer; transition: all 0.15s; text-transform: uppercase;
+  /* SPLIT LAYOUT */
+  .bots-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
   }
+  @media(max-width: 900px) { .bots-split { grid-template-columns: 1fr; } }
+
+  .bot-panel { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .bot-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.6rem 1rem;
+    border-radius: 10px; border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .bot-header.long-header { border-left: 3px solid var(--accent); }
+  .bot-header.short-header { border-left: 3px solid var(--red); }
+  .bot-name { font-family: 'Space Mono', monospace; font-size: 0.8rem; font-weight: 700; }
+  .bot-name.long { color: var(--accent); }
+  .bot-name.short { color: var(--red); }
+  .bot-exchange { font-family: 'Space Mono', monospace; font-size: 0.58rem; color: var(--muted); }
+
+  .controls { display:flex; gap:0.5rem; flex-wrap:wrap; }
+  .btn { font-family: 'Space Mono', monospace; font-size: 0.6rem; letter-spacing: 0.08em; padding: 7px 14px; border-radius: 8px; border: 1px solid; cursor: pointer; transition: all 0.15s; text-transform: uppercase; }
   .btn-pause  { background:transparent; border-color:var(--warn); color:var(--warn); }
   .btn-pause:hover  { background:var(--warn); color:var(--bg); }
   .btn-resume { background:transparent; border-color:var(--accent); color:var(--accent); }
   .btn-resume:hover { background:var(--accent); color:var(--bg); }
-  .btn-report { background:transparent; border-color:var(--muted); color:var(--muted); }
-  .btn-report:hover { border-color:var(--text); color:var(--text); }
+  .btn-resume.red { border-color:var(--red); color:var(--red); }
+  .btn-resume.red:hover { background:var(--red); color:#fff; }
 
-  /* MONITORS */
-  .monitors { display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1.25rem; }
-  .chip {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.58rem; padding: 5px 12px;
-    border-radius: 20px; border: 1px solid rgba(0,255,157,0.25);
-    color: var(--accent); display:flex; align-items:center; gap:5px;
-  }
-  .chip .dot { width:5px; height:5px; border-radius:50%; background:var(--accent); animation:pulse 2s infinite; }
-
-  /* PAUSED BANNER */
-  #paused-banner {
-    display:none; background:rgba(255,204,0,0.07);
-    border:1px solid var(--warn); border-radius:8px;
-    padding:0.6rem 1rem; font-family:'Space Mono',monospace;
-    font-size:0.7rem; color:var(--warn);
-    margin-bottom:1.25rem; text-align:center;
-  }
-
-  /* STATS GRID */
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.75rem;
-    margin-bottom: 1.25rem;
-  }
-  @media(min-width:600px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
-  @media(min-width:900px) { .stats-grid { grid-template-columns: repeat(6, 1fr); } }
-
-  .stat {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1rem;
-    position: relative; overflow: hidden;
-  }
-  .stat::before {
-    content:''; position:absolute; top:0; left:0; right:0; height:2px;
-    background: linear-gradient(90deg, transparent, var(--accent), transparent);
-    opacity: 0.4;
-  }
+  /* STATS */
+  .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 0.85rem; position: relative; overflow: hidden; }
+  .stat::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0.4; }
   .stat.red::before  { background: linear-gradient(90deg, transparent, var(--red), transparent); }
   .stat.blue::before { background: linear-gradient(90deg, transparent, var(--blue), transparent); }
-  .stat.warn::before { background: linear-gradient(90deg, transparent, var(--warn), transparent); }
-  .stat-label {
-    font-family:'Space Mono',monospace; font-size:0.55rem;
-    letter-spacing:0.12em; color:var(--muted);
-    text-transform:uppercase; margin-bottom:0.4rem;
-  }
-  .stat-val {
-    font-size: 1.5rem; font-weight:800; line-height:1; color:var(--text);
-  }
+  .stat-label { font-family:'Space Mono',monospace; font-size:0.52rem; letter-spacing:0.1em; color:var(--muted); text-transform:uppercase; margin-bottom:0.3rem; }
+  .stat-val { font-size: 1.3rem; font-weight:800; line-height:1; color:var(--text); }
   .stat-val.green { color: var(--accent); }
   .stat-val.red   { color: var(--red); }
   .stat-val.blue  { color: var(--blue); }
-  .stat-val.warn  { color: var(--warn); }
-  .stat-sub { font-family:'Space Mono',monospace; font-size:0.58rem; color:var(--muted); margin-top:0.3rem; }
-
-  /* GRID 2 COL */
-  .grid-2 {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-  @media(min-width:800px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+  .stat-sub { font-family:'Space Mono',monospace; font-size:0.55rem; color:var(--muted); margin-top:0.25rem; }
+  .wr-bar { height:4px; background:var(--border); border-radius:3px; margin-top:0.4rem; overflow:hidden; }
+  .wr-fill { height:100%; background:var(--accent); border-radius:3px; transition:width 0.5s; }
 
   /* CARD */
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
-  .card-header {
-    padding:0.75rem 1rem; border-bottom:1px solid var(--border);
-    display:flex; align-items:center; justify-content:space-between;
-  }
-  .card-title { font-family:'Space Mono',monospace; font-size:0.62rem; letter-spacing:0.12em; color:var(--muted); text-transform:uppercase; }
-  .card-body { padding:1rem; }
+  .card-header { padding:0.65rem 1rem; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+  .card-title { font-family:'Space Mono',monospace; font-size:0.58rem; letter-spacing:0.1em; color:var(--muted); text-transform:uppercase; }
 
-  /* POSITIONS CARDS */
-  .pos-cards { display:flex; flex-direction:column; gap:0.75rem; padding:0.75rem; }
-  .pos-card {
-    background: #12121f;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    padding: 0.9rem 1rem;
-    position: relative;
-    overflow: hidden;
-  }
+  /* POSITIONS */
+  .pos-cards { display:flex; flex-direction:column; gap:0.65rem; padding:0.65rem; }
+  .pos-card { background: #12121f; border-radius: 10px; border: 1px solid var(--border); padding: 0.8rem; position: relative; overflow: hidden; }
   .pos-card.long-card  { border-left: 3px solid var(--accent); }
   .pos-card.short-card { border-left: 3px solid var(--red); }
-  .pos-card-top {
-    display:flex; align-items:center; justify-content:space-between;
-    margin-bottom:0.6rem;
-  }
-  .pos-par {
-    font-family:'Space Mono',monospace; font-size:0.85rem;
-    font-weight:700; color:var(--text);
-  }
-  .pos-side {
-    font-family:'Space Mono',monospace; font-size:0.65rem;
-    font-weight:700; padding:3px 10px; border-radius:20px;
-  }
+  .pos-card-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:0.5rem; }
+  .pos-par { font-family:'Space Mono',monospace; font-size:0.8rem; font-weight:700; color:var(--text); }
+  .pos-side { font-family:'Space Mono',monospace; font-size:0.6rem; font-weight:700; padding:2px 8px; border-radius:20px; }
   .pos-side.long  { background:rgba(0,255,157,0.12); color:var(--accent); }
   .pos-side.short { background:rgba(255,59,92,0.12);  color:var(--red); }
-  .pos-lev { font-family:'Space Mono',monospace; font-size:0.58rem; color:var(--muted); margin-left:6px; }
-  .pos-pnl {
-    font-family:'Space Mono',monospace; font-size:1.4rem; font-weight:700;
-    margin-bottom:0.4rem;
-  }
+  .pos-lev { font-family:'Space Mono',monospace; font-size:0.55rem; color:var(--muted); margin-left:5px; }
+  .pos-pnl { font-family:'Space Mono',monospace; font-size:1.2rem; font-weight:700; margin-bottom:0.35rem; }
   .pos-pnl.pos { color:var(--accent); }
   .pos-pnl.neg { color:var(--red); }
-  .pos-details {
-    display:grid; grid-template-columns:1fr 1fr;
-    gap:0.3rem 0; font-family:'Space Mono',monospace; font-size:0.6rem;
-    color:var(--muted); margin-bottom:0.75rem;
-  }
+  .pos-details { display:grid; grid-template-columns:1fr 1fr; gap:0.25rem 0; font-family:'Space Mono',monospace; font-size:0.57rem; color:var(--muted); margin-bottom:0.65rem; }
   .pos-details span { color:var(--text); }
-  .btn-cerrar {
-    width:100%; font-family:'Space Mono',monospace;
-    font-size:0.65rem; letter-spacing:0.08em;
-    padding:8px; border-radius:7px;
-    border:1px solid var(--red); color:var(--red);
-    background:transparent; cursor:pointer;
-    transition:all 0.15s; text-transform:uppercase;
-  }
+  .btn-cerrar { width:100%; font-family:'Space Mono',monospace; font-size:0.6rem; letter-spacing:0.08em; padding:7px; border-radius:7px; border:1px solid var(--red); color:var(--red); background:transparent; cursor:pointer; transition:all 0.15s; text-transform:uppercase; }
   .btn-cerrar:hover { background:var(--red); color:#fff; }
-  .long  { color:var(--accent); font-weight:700; }
-  .short { color:var(--red);    font-weight:700; }
-  .pos   { color:var(--accent); }
-  .neg   { color:var(--red); }
-  .empty { font-family:'Space Mono',monospace; font-size:0.7rem; color:var(--muted); text-align:center; padding:1.5rem; }
+  .empty { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--muted); text-align:center; padding:1.25rem; }
 
   /* LOGS */
-  .log-list {
-    max-height: 260px; overflow-y:auto;
-    font-family:'Space Mono',monospace; font-size:0.63rem; line-height:1.9;
-  }
+  .log-list { max-height:200px; overflow-y:auto; font-family:'Space Mono',monospace; font-size:0.6rem; line-height:1.8; }
   .log-list::-webkit-scrollbar { width:3px; }
   .log-list::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
-  .log-row { display:flex; gap:0.6rem; padding:0.1rem 0; border-bottom:1px solid rgba(26,26,46,0.3); }
+  .log-row { display:flex; gap:0.5rem; padding:0.1rem 0; border-bottom:1px solid rgba(26,26,46,0.3); }
   .log-time { color:var(--muted); flex-shrink:0; }
   .log-msg       { color:#7eb8ff; }
   .log-msg.warn  { color:var(--warn); }
@@ -224,36 +126,19 @@
   .log-msg.ok    { color:var(--accent); }
 
   /* HISTORIAL */
-  .hist-item {
-    display:flex; align-items:center; justify-content:space-between;
-    padding:0.55rem 0; border-bottom:1px solid rgba(26,26,46,0.4);
-    font-family:'Space Mono',monospace; font-size:0.68rem;
-  }
+  .hist-item { display:flex; align-items:center; justify-content:space-between; padding:0.5rem 0; border-bottom:1px solid rgba(26,26,46,0.4); font-family:'Space Mono',monospace; font-size:0.65rem; }
   .hist-item:last-child { border-bottom:none; }
   .hist-par { color:var(--text); font-weight:700; }
-  .hist-date { color:var(--muted); font-size:0.55rem; margin-top:2px; }
+  .hist-date { color:var(--muted); font-size:0.52rem; margin-top:2px; }
 
-  /* WIN/LOSS BAR */
-  .wr-bar { height:6px; background:var(--border); border-radius:3px; margin-top:0.5rem; overflow:hidden; }
-  .wr-fill { height:100%; background:var(--accent); border-radius:3px; transition:width 0.5s; }
+  /* DIVIDER */
+  .divider { width:1px; background:var(--border); }
 
   /* NOTIFICATION */
-  #notif {
-    position:fixed; bottom:1.5rem; right:1.5rem;
-    background:var(--card); border:1px solid var(--accent);
-    border-radius:8px; padding:0.6rem 1rem;
-    font-family:'Space Mono',monospace; font-size:0.68rem; color:var(--accent);
-    z-index:999; opacity:0; transform:translateY(8px);
-    transition:all 0.3s; pointer-events:none;
-  }
+  #notif { position:fixed; bottom:1.5rem; right:1.5rem; background:var(--card); border:1px solid var(--accent); border-radius:8px; padding:0.6rem 1rem; font-family:'Space Mono',monospace; font-size:0.68rem; color:var(--accent); z-index:999; opacity:0; transform:translateY(8px); transition:all 0.3s; pointer-events:none; }
   #notif.show { opacity:1; transform:translateY(0); }
 
-  /* MOBILE TWEAKS */
-  @media(max-width:480px) {
-    main { padding:0.75rem; }
-    .stat-val { font-size:1.2rem; }
-    header { padding:0 0.75rem; }
-  }
+  @media(max-width:480px) { main { padding:0.5rem; } .stats-grid { grid-template-columns: repeat(2,1fr); } }
 </style>
 </head>
 <body>
@@ -261,124 +146,188 @@
 <header>
   <div class="logo">
     <div class="pulse"></div>
-    SMC_BOT
+    SMC_BOTS
   </div>
   <div class="header-right">
-    <span id="status-badge" class="badge">ONLINE</span>
+    <div class="header-bot">
+      <div class="pulse" id="long-pulse"></div>
+      <span style="color:var(--accent);font-size:0.6rem">LONG</span>
+      <span id="long-badge" class="badge">ONLINE</span>
+    </div>
+    <div class="header-bot">
+      <div class="pulse red" id="short-pulse"></div>
+      <span style="color:var(--red);font-size:0.6rem">SHORT</span>
+      <span id="short-badge" class="badge red">ONLINE</span>
+    </div>
     <span id="last-update">--:--</span>
   </div>
 </header>
 
 <main>
-  <div id="paused-banner">⚠ BOT EN PAUSA</div>
+  <div class="bots-split">
 
-  <!-- CONTROLS -->
-  <div class="controls">
-    <button class="btn btn-pause"   onclick="pausar()">⏸ Pausar</button>
-    <button class="btn btn-resume"  onclick="reactivar()">▶ Reactivar</button>
-    <button class="btn btn-report"  onclick="reporte()">📊 Reporte</button>
-  </div>
-
-  <!-- MONITORS -->
-  <div class="monitors">
-    <div class="chip"><div class="dot"></div>SMC MARKET</div>
-    <div class="chip"><div class="dot"></div>TRUMP</div>
-    <div class="chip"><div class="dot"></div>FED</div>
-    <div class="chip"><div class="dot"></div>SEC</div>
-    <div class="chip"><div class="dot"></div>CPI</div>
-    <div class="chip"><div class="dot"></div>BALLENAS</div>
-    <div class="chip"><div class="dot"></div>LIQUIDACIONES</div>
-    <div class="chip"><div class="dot"></div>KUCOIN API</div>
-  </div>
-
-  <!-- STATS -->
-  <div class="stats-grid">
-    <div class="stat">
-      <div class="stat-label">Balance</div>
-      <div class="stat-val green" id="capital">$—</div>
-      <div class="stat-sub">USDT disponible</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">P&L Abierto</div>
-      <div class="stat-val" id="pnl-total">$—</div>
-      <div class="stat-sub" id="pnl-pct">—</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Posiciones</div>
-      <div class="stat-val blue" id="num-pos">—</div>
-      <div class="stat-sub">Abiertas ahora</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Ganadas</div>
-      <div class="stat-val green" id="wins">—</div>
-      <div class="stat-sub" id="wr-label">Win rate</div>
-      <div class="stat-sub green" id="pnl-ganadas" style="color:var(--accent);margin-top:2px">+$0.00</div>
-      <div class="wr-bar"><div class="wr-fill" id="wr-fill" style="width:0%"></div></div>
-    </div>
-    <div class="stat red">
-      <div class="stat-label">Perdidas</div>
-      <div class="stat-val red" id="losses">—</div>
-      <div class="stat-sub" id="pnl-hist">P&L total</div>
-      <div class="stat-sub" id="pnl-perdidas" style="color:var(--red);margin-top:2px">-$0.00</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Ciclo</div>
-      <div class="stat-val" id="ciclo">—</div>
-      <div class="stat-sub" id="proximo">—</div>
-    </div>
-  </div>
-
-  <!-- POSITIONS + LOGS -->
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Mis futuros</span>
-        <span class="card-title" id="pos-count">0</span>
+    <!-- ═══ BOT LONG (KuCoin) ═══ -->
+    <div class="bot-panel">
+      <div class="bot-header long-header">
+        <div>
+          <div class="bot-name long">▲ BOT LONG</div>
+          <div class="bot-exchange">KuCoin Futures · XBTUSDTM · ETHUSDTM · SOLUSDTM · XRPUSDTM</div>
+        </div>
+        <div class="controls">
+          <button class="btn btn-pause"   onclick="pausarBot('long')">⏸ Pausar</button>
+          <button class="btn btn-resume"  onclick="reactivarBot('long')">▶ Reactivar</button>
+        </div>
       </div>
-      <div id="pos-cards" class="pos-cards">
-        <div class="empty">Sin posiciones abiertas</div>
-      </div>
-    </div>
 
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Log en vivo</span>
-        <span class="card-title" id="log-count">0</span>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-label">Balance</div>
+          <div class="stat-val green" id="l-capital">$—</div>
+          <div class="stat-sub">USDT</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">P&L Abierto</div>
+          <div class="stat-val" id="l-pnl">$—</div>
+          <div class="stat-sub" id="l-pnl-pct">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Posiciones</div>
+          <div class="stat-val blue" id="l-num-pos">—</div>
+          <div class="stat-sub">Abiertas</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Ganadas</div>
+          <div class="stat-val green" id="l-wins">—</div>
+          <div class="stat-sub" id="l-wr">Win rate</div>
+          <div class="wr-bar"><div class="wr-fill" id="l-wr-fill" style="width:0%"></div></div>
+        </div>
+        <div class="stat red">
+          <div class="stat-label">Perdidas</div>
+          <div class="stat-val red" id="l-losses">—</div>
+          <div class="stat-sub" id="l-pnl-hist">P&L total</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Ciclo</div>
+          <div class="stat-val" id="l-ciclo">—</div>
+        </div>
       </div>
-      <div class="card-body" style="padding:0.6rem 0.75rem">
-        <div class="log-list" id="log-list"></div>
-      </div>
-    </div>
-  </div>
 
-  <!-- HISTORIAL + TRUMP -->
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Historial de operaciones</span>
-        <span class="card-title" id="hist-count">0</span>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Posiciones LONG</span>
+          <span class="card-title" id="l-pos-count">0</span>
+        </div>
+        <div id="l-pos-cards" class="pos-cards">
+          <div class="empty">Sin posiciones abiertas</div>
+        </div>
       </div>
-      <div class="card-body" style="padding:0 1rem">
-        <div id="hist-list"><div class="empty">Sin historial</div></div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Log en vivo</span>
+          <span class="card-title" id="l-log-count">0</span>
+        </div>
+        <div style="padding:0.5rem 0.65rem">
+          <div class="log-list" id="l-log-list"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Historial</span>
+          <span class="card-title" id="l-hist-count">0</span>
+        </div>
+        <div style="padding:0 1rem" id="l-hist-list">
+          <div class="empty">Sin historial</div>
+        </div>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Trump Monitor</span>
-        <span class="card-title" id="trump-count">0 posts</span>
+    <!-- ═══ BOT SHORT (BingX) ═══ -->
+    <div class="bot-panel">
+      <div class="bot-header short-header">
+        <div>
+          <div class="bot-name short">▼ BOT SHORT</div>
+          <div class="bot-exchange">BingX Futures · BTC-USDT · ETH-USDT · SOL-USDT · XRP-USDT</div>
+        </div>
+        <div class="controls">
+          <button class="btn btn-pause"        onclick="pausarBot('short')">⏸ Pausar</button>
+          <button class="btn btn-resume red"   onclick="reactivarBot('short')">▶ Reactivar</button>
+        </div>
       </div>
-      <div style="max-height:220px; overflow-y:auto" id="trump-feed">
-        <div class="empty">Sin posts recientes</div>
+
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-label">Balance</div>
+          <div class="stat-val" style="color:var(--red)" id="s-capital">$—</div>
+          <div class="stat-sub">USDT</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">P&L Abierto</div>
+          <div class="stat-val" id="s-pnl">$—</div>
+          <div class="stat-sub" id="s-pnl-pct">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Posiciones</div>
+          <div class="stat-val blue" id="s-num-pos">—</div>
+          <div class="stat-sub">Abiertas</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Ganadas</div>
+          <div class="stat-val green" id="s-wins">—</div>
+          <div class="stat-sub" id="s-wr">Win rate</div>
+          <div class="wr-bar"><div class="wr-fill" id="s-wr-fill" style="width:0%"></div></div>
+        </div>
+        <div class="stat red">
+          <div class="stat-label">Perdidas</div>
+          <div class="stat-val red" id="s-losses">—</div>
+          <div class="stat-sub" id="s-pnl-hist">P&L total</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Ciclo</div>
+          <div class="stat-val" id="s-ciclo">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Posiciones SHORT</span>
+          <span class="card-title" id="s-pos-count">0</span>
+        </div>
+        <div id="s-pos-cards" class="pos-cards">
+          <div class="empty">Sin posiciones abiertas</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Log en vivo</span>
+          <span class="card-title" id="s-log-count">0</span>
+        </div>
+        <div style="padding:0.5rem 0.65rem">
+          <div class="log-list" id="s-log-list"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Historial</span>
+          <span class="card-title" id="s-hist-count">0</span>
+        </div>
+        <div style="padding:0 1rem" id="s-hist-list">
+          <div class="empty">Sin historial</div>
+        </div>
       </div>
     </div>
+
   </div>
 </main>
 
 <div id="notif"></div>
 
 <script>
-  const BASE = '';
+  const LONG_URL  = '';
+  const SHORT_URL = 'https://smc-short-bot-production.up.railway.app';
 
   function showNotif(msg, color) {
     const n = document.getElementById('notif');
@@ -394,86 +343,79 @@
     return parseFloat(n).toFixed(dec);
   }
 
-  async function cargarEstado() {
+  function renderPosCards(pos, prefix) {
+    const el = document.getElementById(prefix + '-pos-cards');
+    document.getElementById(prefix + '-pos-count').textContent = pos.length;
+    document.getElementById(prefix + '-num-pos').textContent = pos.length;
+    if (!pos.length) { el.innerHTML = '<div class="empty">Sin posiciones abiertas</div>'; return 0; }
+    let pnlTotal = 0;
+    el.innerHTML = pos.map(p => {
+      const pnl    = parseFloat(p.pnl || 0);
+      pnlTotal    += pnl;
+      const isLong = (p.dir||p.lado||'').toUpperCase() === 'LONG';
+      const pnlCls = pnl >= 0 ? 'pos' : 'neg';
+      const pnlSign = pnl >= 0 ? '+' : '';
+      const baseUrl = prefix === 'l' ? LONG_URL : SHORT_URL;
+      return `
+      <div class="pos-card ${isLong ? 'long-card' : 'short-card'}">
+        <div class="pos-card-top">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="pos-par">${p.simbolo||'—'}</span>
+            <span class="pos-side ${isLong?'long':'short'}">${isLong?'Largo':'Corto'}</span>
+            <span class="pos-lev">10x</span>
+          </div>
+          <span style="font-family:'Space Mono',monospace;font-size:0.58rem;color:var(--muted)">IA ${p.confianza_ia||'—'}%</span>
+        </div>
+        <div class="pos-pnl ${pnlCls}">${pnlSign}$${fmt(pnl)} <span style="font-size:0.7rem">${pnlSign}${fmt(p.pnl_pct||0,2)}%</span></div>
+        <div class="pos-details">
+          <div>Entrada</div><div><span>$${fmt(p.entrada,4)}</span></div>
+          <div>${p.tp1 ? (p.tp1_hit ? 'TP1 ✅' : 'TP1') : 'TP'}</div><div><span style="color:var(--accent)">$${fmt(p.tp1||p.tp,4)}</span></div>
+          ${p.tp2 ? `<div>${p.tp1_hit?'TP2 🎯':'TP2'}</div><div><span style="color:#f7931a">$${fmt(p.tp2,4)}</span></div>` : ''}
+          <div>SL</div><div><span style="color:var(--red)">$${fmt(p.sl,4)}</span></div>
+          <div>Margen</div><div><span>$${fmt(p.margen)}</span></div>
+        </div>
+        <button class="btn-cerrar" onclick="cerrarManual('${p.simbolo}','${prefix}')">⏹ Cerrar ${p.simbolo}</button>
+      </div>`;
+    }).join('');
+    return pnlTotal;
+  }
+
+  async function cargarEstado(prefix, baseUrl) {
     try {
-      const r = await fetch(BASE + '/api/estado');
+      const r = await fetch(baseUrl + '/api/estado');
       if (!r.ok) throw new Error();
       const d = await r.json();
 
-      document.getElementById('capital').textContent = '$' + fmt(d.capital);
-      document.getElementById('ciclo').textContent = d.ciclo || '—';
+      document.getElementById(prefix + '-capital').textContent = '$' + fmt(d.capital);
+      document.getElementById(prefix + '-ciclo').textContent = d.ciclo || '—';
 
-      const badge = document.getElementById('status-badge');
-      if (d.pausado) {
-        badge.textContent = 'PAUSADO'; badge.className = 'badge offline';
-        document.getElementById('paused-banner').style.display = 'block';
-      } else {
-        badge.textContent = 'ONLINE'; badge.className = 'badge';
-        document.getElementById('paused-banner').style.display = 'none';
-      }
+      const badge = document.getElementById(prefix === 'l' ? 'long-badge' : 'short-badge');
+      badge.textContent = d.pausado ? 'PAUSADO' : 'ONLINE';
+      badge.className = d.pausado ? 'badge offline' : (prefix === 's' ? 'badge red' : 'badge');
 
-      // Posiciones
       const pos = d.posiciones || [];
-      document.getElementById('num-pos').textContent = pos.length;
-      document.getElementById('pos-count').textContent = pos.length;
-      const posCards = document.getElementById('pos-cards');
-      if (!pos.length) {
-        posCards.innerHTML = '<div class="empty">Sin posiciones abiertas</div>';
-        document.getElementById('pnl-total').textContent = '$0.00';
-        document.getElementById('pnl-pct').textContent = '0.00%';
-      } else {
-        let pnlTotal = 0;
-        posCards.innerHTML = pos.map(p => {
-          const pnl    = parseFloat(p.pnl || 0);
-          pnlTotal    += pnl;
-          const isLong = (p.dir||p.lado||'').toUpperCase() === 'LONG';
-          const pnlCls = pnl >= 0 ? 'pos' : 'neg';
-          const pnlSign = pnl >= 0 ? '+' : '';
-          const pnlPct = p.entrada ? (pnl / (p.margen||1) * 100).toFixed(2) : '0.00';
-          const sideLbl = isLong ? 'Largo' : 'Corto';
-          return `
-          <div class="pos-card ${isLong ? 'long-card' : 'short-card'}">
-            <div class="pos-card-top">
-              <div style="display:flex;align-items:center;gap:8px">
-                <span class="pos-par">${p.simbolo||'—'}</span>
-                <span class="pos-side ${isLong?'long':'short'}">${sideLbl}</span>
-                <span class="pos-lev">10x</span>
-              </div>
-              <span style="font-family:'Space Mono',monospace;font-size:0.6rem;color:var(--muted)">IA ${p.confianza_ia||'—'}%</span>
-            </div>
-            <div class="pos-pnl ${pnlCls}">${pnlSign}$${fmt(pnl)} <span style="font-size:0.75rem">${pnlSign}${fmt(p.pnl_pct||0,2)}%</span></div>
-            <div class="pos-details">
-              <div>Entrada</div><div><span>$${fmt(p.entrada,4)}</span></div>
-              <div>${p.tp1 ? (p.tp1_hit ? 'TP1 ✅' : 'TP1') : 'TP'}</div><div><span style="color:var(--accent)">$${fmt(p.tp1||p.tp,4)}</span></div>
-              ${p.tp2 ? `<div>${p.tp1_hit ? 'TP2 🎯' : 'TP2'}</div><div><span style="color:#f7931a">$${fmt(p.tp2,4)}</span></div>` : ''}
-              <div>SL</div><div><span style="color:var(--red)">${p.tp1_hit ? '🔒 BE ' : ''}$${fmt(p.sl,4)}</span></div>
-              <div>Margen</div><div><span>$${fmt(p.margen)}</span></div>
-            </div>
-            <button class="btn-cerrar" onclick="cerrarManual('${p.simbolo}')">⏹ Cerrar ${p.simbolo}</button>
-          </div>`;
-        }).join('');
-        const pnlEl = document.getElementById('pnl-total');
-        pnlEl.textContent = (pnlTotal>=0?'+':'') + '$' + fmt(pnlTotal);
-        pnlEl.className = 'stat-val ' + (pnlTotal>=0?'green':'red');
-        const cap = parseFloat(d.capital) || 91;
-        document.getElementById('pnl-pct').textContent = fmt(pnlTotal/cap*100) + '%';
-      }
+      const pnlTotal = renderPosCards(pos, prefix);
 
-      document.getElementById('last-update').textContent = new Date().toLocaleTimeString('es-CL');
+      const pnlEl = document.getElementById(prefix + '-pnl');
+      pnlEl.textContent = (pnlTotal>=0?'+':'') + '$' + fmt(pnlTotal);
+      pnlEl.className = 'stat-val ' + (pnlTotal>=0?'green':'red');
+      const cap = parseFloat(d.capital) || 1;
+      document.getElementById(prefix + '-pnl-pct').textContent = fmt(pnlTotal/cap*100) + '%';
+
     } catch(e) {
-      document.getElementById('status-badge').textContent = 'ERROR';
-      document.getElementById('status-badge').className = 'badge offline';
+      const badge = document.getElementById(prefix === 'l' ? 'long-badge' : 'short-badge');
+      badge.textContent = 'ERROR'; badge.className = 'badge offline';
     }
   }
 
-  async function cargarLogs() {
+  async function cargarLogs(prefix, baseUrl) {
     try {
-      const r = await fetch(BASE + '/api/logs');
+      const r = await fetch(baseUrl + '/api/logs');
       if (!r.ok) return;
       const d = await r.json();
-      const logs = (d.logs || []).slice(-60).reverse();
-      document.getElementById('log-count').textContent = logs.length;
-      const list = document.getElementById('log-list');
+      const logs = (d.logs || []).slice(-40).reverse();
+      document.getElementById(prefix + '-log-count').textContent = logs.length;
+      const list = document.getElementById(prefix + '-log-list');
       list.innerHTML = logs.map(l => {
         const lvl = (l.nivel || '').toLowerCase();
         const msg = l.mensaje || l;
@@ -487,110 +429,84 @@
     } catch(e) {}
   }
 
-  async function cargarHistorial() {
+  async function cargarHistorial(prefix, baseUrl) {
     try {
-      const r = await fetch(BASE + '/api/historial');
+      const r = await fetch(baseUrl + '/api/historial');
       if (!r.ok) return;
       const d = await r.json();
       const hist = d.historial || d || [];
-      const el = document.getElementById('hist-list');
-      document.getElementById('hist-count').textContent = hist.length;
-
+      document.getElementById(prefix + '-hist-count').textContent = hist.length;
+      const el = document.getElementById(prefix + '-hist-list');
       if (!hist.length) { el.innerHTML = '<div class="empty">Sin historial</div>'; return; }
 
       const wins   = hist.filter(h => parseFloat(h.pnl||0) > 0).length;
       const losses = hist.filter(h => parseFloat(h.pnl||0) < 0).length;
       const total  = hist.length;
       const wr     = total ? Math.round(wins/total*100) : 0;
-      const pnlSum     = hist.reduce((a,h) => a + parseFloat(h.pnl||0), 0);
-      const pnlGanadas = hist.filter(h => parseFloat(h.pnl||0) > 0).reduce((a,h) => a + parseFloat(h.pnl||0), 0);
-      const pnlPerdidas = hist.filter(h => parseFloat(h.pnl||0) < 0).reduce((a,h) => a + parseFloat(h.pnl||0), 0);
+      const pnlSum = hist.reduce((a,h) => a + parseFloat(h.pnl||0), 0);
 
-      document.getElementById('wins').textContent    = wins;
-      document.getElementById('losses').textContent  = losses;
-      document.getElementById('wr-label').textContent = `Win rate ${wr}%`;
-      document.getElementById('wr-fill').style.width  = wr + '%';
-      document.getElementById('pnl-hist').textContent = (pnlSum>=0?'+':'') + '$' + fmt(pnlSum);
-      document.getElementById('pnl-ganadas').textContent  = '+$' + fmt(pnlGanadas);
-      document.getElementById('pnl-perdidas').textContent = '-$' + fmt(Math.abs(pnlPerdidas));
+      document.getElementById(prefix + '-wins').textContent   = wins;
+      document.getElementById(prefix + '-losses').textContent = losses;
+      document.getElementById(prefix + '-wr').textContent     = `Win rate ${wr}%`;
+      document.getElementById(prefix + '-wr-fill').style.width = wr + '%';
+      document.getElementById(prefix + '-pnl-hist').textContent = (pnlSum>=0?'+':'') + '$' + fmt(pnlSum);
 
-      el.innerHTML = hist.slice(-20).reverse().map(h => {
+      el.innerHTML = hist.slice(-15).reverse().map(h => {
         const pnl = parseFloat(h.pnl||0);
         const cls = pnl >= 0 ? 'pos' : 'neg';
         return `<div class="hist-item">
           <div>
             <div class="hist-par">${h.simbolo||'—'} <span style="color:var(--muted);font-weight:400">${(h.lado||'').toUpperCase()}</span></div>
-            <div class="hist-date">${h.fecha||h.tiempo||'—'} · ${h.motivo||''}</div>
+            <div class="hist-date">${h.fecha||h.tiempo||'—'}</div>
           </div>
-          <div class="${cls}" style="font-family:'Space Mono',monospace;font-size:0.72rem">${pnl>=0?'+':''}$${fmt(pnl)}</div>
+          <div class="${cls}" style="font-family:'Space Mono',monospace;font-size:0.7rem">${pnl>=0?'+':''}$${fmt(pnl)}</div>
         </div>`;
       }).join('');
     } catch(e) {}
   }
 
-  async function cargarTrump() {
+  async function pausarBot(bot) {
+    const url = bot === 'long' ? LONG_URL : SHORT_URL;
     try {
-      const r = await fetch(BASE + '/api/trump');
-      if (!r.ok) return;
+      const r = await fetch(url + '/api/pausar', { method:'POST' });
       const d = await r.json();
-      const posts = d.posts || d || [];
-      document.getElementById('trump-count').textContent = posts.length + ' posts';
-      const feed = document.getElementById('trump-feed');
-      if (!posts.length) { feed.innerHTML = '<div class="empty">Sin posts recientes</div>'; return; }
-      feed.innerHTML = posts.slice(-10).reverse().map(p => `
-        <div style="padding:0.65rem 1rem;border-bottom:1px solid var(--border);font-size:0.78rem;line-height:1.5">
-          <div>${p.texto||p.text||p}</div>
-          <div style="font-family:'Space Mono',monospace;font-size:0.58rem;color:var(--muted);margin-top:3px">${p.fecha||p.time||''}</div>
-        </div>
-      `).join('');
-    } catch(e) {}
-  }
-
-  async function pausar() {
-    try {
-      const r = await fetch(BASE + '/api/pausar', { method:'POST' });
-      const d = await r.json();
-      showNotif(d.mensaje||'Bot pausado', 'var(--warn)');
-      cargarEstado();
+      showNotif(d.mensaje || 'Bot pausado', 'var(--warn)');
+      cargarEstado(bot === 'long' ? 'l' : 's', url);
     } catch(e) { showNotif('Error al pausar', 'var(--red)'); }
   }
 
-  async function reactivar() {
+  async function reactivarBot(bot) {
+    const url = bot === 'long' ? LONG_URL : SHORT_URL;
     try {
-      const r = await fetch(BASE + '/api/reactivar', { method:'POST' });
+      const r = await fetch(url + '/api/reactivar', { method:'POST' });
       const d = await r.json();
-      showNotif(d.mensaje||'Bot reactivado', 'var(--accent)');
-      cargarEstado();
+      showNotif(d.mensaje || 'Bot reactivado', 'var(--accent)');
+      cargarEstado(bot === 'long' ? 'l' : 's', url);
     } catch(e) { showNotif('Error al reactivar', 'var(--red)'); }
   }
 
-  async function reporte() {
-    showNotif('Enviando reporte a Telegram...', 'var(--accent)');
-  }
-
-  async function cerrarManual(simbolo) {
-    if (!confirm(`¿Cerrar posición ${simbolo} ahora al precio de mercado?`)) return;
+  async function cerrarManual(simbolo, prefix) {
+    const url = prefix === 'l' ? LONG_URL : SHORT_URL;
+    if (!confirm(`¿Cerrar posición ${simbolo} al precio de mercado?`)) return;
     try {
-      const r = await fetch(BASE + '/api/cerrar_manual', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const r = await fetch(url + '/api/cerrar_manual', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ simbolo })
       });
       const d = await r.json();
-      if (d.ok) {
-        showNotif(`✓ ${simbolo} cerrado`, 'var(--accent)');
-        cargarEstado();
-      } else {
-        showNotif(`Error: ${d.error}`, 'var(--red)');
-      }
+      if (d.ok) { showNotif(`✓ ${simbolo} cerrado`, 'var(--accent)'); cargarEstado(prefix, url); }
+      else showNotif(`Error: ${d.error}`, 'var(--red)');
     } catch(e) { showNotif('Error al cerrar', 'var(--red)'); }
   }
 
   function tick() {
-    cargarEstado();
-    cargarLogs();
-    cargarHistorial();
-    cargarTrump();
+    cargarEstado('l', LONG_URL);
+    cargarEstado('s', SHORT_URL);
+    cargarLogs('l', LONG_URL);
+    cargarLogs('s', SHORT_URL);
+    cargarHistorial('l', LONG_URL);
+    cargarHistorial('s', SHORT_URL);
+    document.getElementById('last-update').textContent = new Date().toLocaleTimeString('es-CL');
   }
 
   tick();
