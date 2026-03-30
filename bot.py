@@ -182,47 +182,43 @@ def obtener_funding_rate(simbolo: str) -> str:
 # ─── FILTRO TENDENCIA BTC ─────────────────────────────────────────────────────
 
 def actualizar_tendencia_btc():
-    """Actualiza la tendencia de BTC cada 30 min para filtrar operaciones"""
+    """Actualiza la tendencia de BTC cada 30 min usando EMA50 en 4H"""
     while True:
         try:
-            df = velas("XBTUSDTM", "240", 50)
-            if not df.empty:
-                t = tendencia(df)
-                df_d = velas("XBTUSDTM", "1440", 10)
-                if not df_d.empty and len(df_d) >= 7:
-                    cambio_7d = (df_d["close"].iloc[-1] - df_d["close"].iloc[-7]) / df_d["close"].iloc[-7]
-                    # Crash >8% en 7 dias: solo SHORT
-                    if cambio_7d < -0.08 and t != "bajista":
-                        t = "bajista"
-                        log.info(f"BTC crash ({cambio_7d*100:.1f}% en 7d) — solo SHORT")
-                    # Rally >8% en 7 dias: solo LONG
-                    elif cambio_7d > 0.08 and t != "alcista":
-                        t = "alcista"
-                        log.info(f"BTC rally ({cambio_7d*100:.1f}% en 7d) — solo LONG")
+            df = velas("XBTUSDTM", "240", 60)
+            if not df.empty and len(df) >= 50:
+                ema50 = df["close"].ewm(span=50, adjust=False).mean().iloc[-1]
+                precio_actual = df["close"].iloc[-1]
+                # Filtro EMA50: precio sobre EMA50 = alcista, bajo = bajista
+                if precio_actual > ema50:
+                    t = "alcista"
+                    log.info(f"BTC sobre EMA50 (${precio_actual:.0f} > ${ema50:.0f}) — tendencia ALCISTA")
+                else:
+                    t = "bajista"
+                    log.info(f"BTC bajo EMA50 (${precio_actual:.0f} < ${ema50:.0f}) — tendencia BAJISTA")
                 with lock:
                     estado["tendencia_btc"] = t
-                cambio_str = f"{cambio_7d*100:.1f}%" if 'cambio_7d' in dir() else "N/A"
-                log.info(f"Tendencia BTC actualizada: {t} | cambio 7d: {cambio_str}")
         except Exception as e:
             log.error(f"Tendencia BTC: {e}")
         time.sleep(30 * 60)
 
 def filtro_tendencia_btc(dir_operacion: str) -> bool:
     """
-    Retorna True si la operacion va en la misma direccion que BTC.
-    Si BTC esta lateral, permite ambas direcciones.
+    Solo permite operaciones LONG (alcistas).
+    Ademas filtra que BTC este sobre EMA50 en 4H.
     """
+    # Solo LONG — bloquear cualquier SHORT
+    if dir_operacion != "alcista":
+        log.info(f"Filtro LONG-only: operacion {dir_operacion} bloqueada — este bot solo abre LONGs")
+        return False
+
     with lock:
         t_btc = estado["tendencia_btc"]
 
-    if t_btc == "lateral":
-        return True  # Mercado lateral: permite ambas direcciones
-    if t_btc == "alcista" and dir_operacion == "alcista":
-        return True
-    if t_btc == "bajista" and dir_operacion == "bajista":
+    if t_btc == "alcista":
         return True
 
-    log.info(f"Filtro BTC: tendencia {t_btc} — operacion {dir_operacion} bloqueada")
+    log.info(f"Filtro BTC EMA50: tendencia {t_btc} — LONG bloqueado hasta que BTC supere EMA50")
     return False
 
 # ─── TELEGRAM ────────────────────────────────────────────────────────────────
