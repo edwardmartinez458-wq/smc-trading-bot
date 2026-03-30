@@ -843,9 +843,10 @@ def recalcular_capital():
     caida   = (cap_ini - estado["capital"]) / cap_ini if cap_ini > 0 else 0
 
     if caida >= 0.40:
+        if not estado["circuit_breaker"]:
+            tg(f"CIRCUIT BREAKER PERMANENTE\nCapital cayo {caida*100:.0f}% del inicial (${estado['capital']:.2f}).\nBot detenido. Usa /reactivar para continuar.")
+            log.critical(f"Capital caido {caida*100:.0f}% — CB permanente")
         estado["circuit_breaker"] = True
-        tg(f"CIRCUIT BREAKER PERMANENTE\nCapital cayo {caida*100:.0f}% del inicial (${estado['capital']:.2f}).\nBot detenido. Usa /reactivar para continuar.")
-        log.critical(f"Capital caido {caida*100:.0f}% — CB permanente")
     elif caida >= 0.20 and estado["apalancamiento"] > 10:
         estado["apalancamiento"] = 10
         log.warning("Apalancamiento reducido a x10 por caida de capital")
