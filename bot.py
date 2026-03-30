@@ -1183,8 +1183,8 @@ RAZON: una linea breve"""}]
 
 def abrir(simbolo, t, pc, ia):
     lev    = estado["apalancamiento"]
-    lado   = "buy" if t == "alcista" else "sell"
-    dir_   = "LONG" if lado == "buy" else "SHORT"
+    lado   = "buy"
+    dir_   = "LONG"
 
     # SL basado en ATR (volatilidad real) — 2x ATR del 4H
     df_4h_sl = velas(simbolo, "240", 30)
@@ -1194,20 +1194,20 @@ def abrir(simbolo, t, pc, ia):
     # TP parcial: TP1 a 1.5x ATR (asegurar ganancia), TP2 a 3x ATR (objetivo final)
     tp1_dist = max(atr_val * 1.5, pc * 0.015)  # minimo 1.5%
     tp2_dist = max(atr_val * 3.0, pc * 0.03)   # minimo 3%
-    sl  = round(pc - sl_dist  if lado == "buy" else pc + sl_dist,  6)
-    tp1 = round(pc + tp1_dist if lado == "buy" else pc - tp1_dist, 6)
-    tp2 = round(pc + tp2_dist if lado == "buy" else pc - tp2_dist, 6)
+    sl  = round(pc - sl_dist,  6)
+    tp1 = round(pc + tp1_dist, 6)
+    tp2 = round(pc + tp2_dist, 6)
     tp  = tp1  # compatibilidad con resto del codigo
     log.info(f"{simbolo} — ATR {atr_val:.4f} → SL ${sl:.4f} | TP1 ${tp1:.4f} | TP2 ${tp2:.4f}")
 
     # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 55)
-    if confianza >= 70:
-        capital_pct = 1.00  # 100% — alta seguridad
-    elif confianza >= 61:
+    if confianza >= 76:
+        capital_pct = 1.00  # 100% — muy alta confianza
+    elif confianza >= 62:
         capital_pct = 0.65  # 65%
     else:
-        capital_pct = 0.35  # 35% — minimo
+        capital_pct = 0.40  # 40% — confianza minima
     riesgo_usdt = estado["capital"] * capital_pct * sl_pct
     log.info(f"{simbolo} — confianza {confianza}% → capital {capital_pct*100:.0f}% | riesgo max ${riesgo_usdt:.2f}")
     g_pot = riesgo_usdt * (TP_PCT / SL_PCT)
@@ -1226,14 +1226,14 @@ def abrir(simbolo, t, pc, ia):
     sl_oid, tp1_oid = resultado
 
     # Colocar TP2 para la otra mitad
-    close_s = "sell" if lado == "buy" else "buy"
+    close_s = "sell"
     tp2_oid = f"tp2_{int(time.time()*1000)}"
     kc_post("/api/v1/orders", {
         "clientOid":     tp2_oid,
         "symbol":        simbolo,
         "side":          close_s,
         "type":          "market",
-        "stop":          "up" if lado == "buy" else "down",
+        "stop":          "up",
         "stopPrice":     str(tp2),
         "stopPriceType": "MP",
         "size":          cant_tp2,
@@ -1720,61 +1720,48 @@ def abrir_breakout(simbolo, pc, ia):
 
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
-def _trade_ema_rsi(simbolo, t, pc, df_4h):
-    """Nueva estrategia: EMA21 + EMA89 + RSI14 en 4H (mas simple y medible)."""
-    if len(df_4h) < 90:
-        log.info(f"{simbolo} — sin suficientes velas 4H para EMA89")
+def _trade_ema_rsi(simbolo, pc, df_4h):
+    """Estrategia: EMA21 + EMA89 + EMA200 en 4H — solo LONG."""
+    if len(df_4h) < 200:
+        log.info(f"{simbolo} — sin suficientes velas 4H para EMA200")
         return
 
-    # Calcular EMA21 y EMA89
-    ema21 = df_4h["close"].ewm(span=21, adjust=False).mean()
-    ema89 = df_4h["close"].ewm(span=89, adjust=False).mean()
-    rsi   = calcular_rsi(df_4h)
+    # Calcular EMAs
+    ema21  = df_4h["close"].ewm(span=21,  adjust=False).mean()
+    ema89  = df_4h["close"].ewm(span=89,  adjust=False).mean()
+    ema200 = df_4h["close"].ewm(span=200, adjust=False).mean()
 
-    ema21_v = ema21.iloc[-1]
-    ema89_v = ema89.iloc[-1]
+    ema21_v  = ema21.iloc[-1]
+    ema89_v  = ema89.iloc[-1]
+    ema200_v = ema200.iloc[-1]
 
-    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} RSI={rsi:.1f}")
+    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} EMA200=${ema200_v:.4f}")
 
-    # Filtro tendencia BTC alineada
-    if not filtro_tendencia_btc(t):
-        log.info(f"{simbolo} — RECHAZADO: filtro BTC (par={t}, BTC={estado['tendencia_btc']})")
+    # Filtro 1: EMA21 > EMA89 (tendencia alcista 4H)
+    if ema21_v <= ema89_v:
+        log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89")
         return
 
-    # LONG: EMA21 > EMA89 + RSI entre 45-70 + precio sobre EMA21
-    if t == "alcista":
-        if ema21_v <= ema89_v:
-            log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin tendencia alcista 4H)")
-            return
-        if rsi < 45 or rsi > 70:
-            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (45-70)")
-            return
-        if pc < ema21_v:
-            log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
-            return
+    # Filtro 2: precio sobre EMA200 (tendencia macro alcista)
+    if pc < ema200_v:
+        log.info(f"{simbolo} — RECHAZADO: precio bajo EMA200 (pc=${pc:.4f} < ${ema200_v:.4f})")
+        return
 
-    # SHORT: EMA21 < EMA89 + RSI entre 30-55 + precio bajo EMA21
-    elif t == "bajista":
-        if ema21_v >= ema89_v:
-            log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin tendencia bajista 4H)")
-            return
-        if rsi > 55 or rsi < 30:
-            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (30-55)")
-            return
-        if pc > ema21_v:
-            log.info(f"{simbolo} — RECHAZADO: precio sobre EMA21 (pc=${pc:.4f} > ${ema21_v:.4f})")
-            return
+    # Filtro 3: precio sobre EMA21 (zona de compra)
+    if pc < ema21_v:
+        log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
+        return
 
-    log.info(f"{simbolo} — EMA+RSI OK — consultando IA...")
+    log.info(f"{simbolo} — EMAs OK — consultando IA...")
     ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
-    ia = filtro_ia(simbolo, t, pc, ob_ctx, 0)
+    ia = filtro_ia(simbolo, "alcista", pc, ob_ctx, 0)
 
     if not ia["entrar"]:
         log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
         return
 
-    log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
-    abrir(simbolo, t, pc, ia)
+    log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO LONG")
+    abrir(simbolo, "alcista", pc, ia)
 
 
 def analizar(simbolo: str):
@@ -1805,14 +1792,10 @@ def analizar(simbolo: str):
         log.info(f"{simbolo} — sin precio")
         return
 
-    t = tendencia(df_d)
-    log.info(f"{simbolo} — tendencia Daily: {t} | precio: ${pc:.4f}")
-    if t == "lateral":
-        log.info(f"{simbolo} — RECHAZADO: tendencia lateral")
-        return
+    log.info(f"{simbolo} — precio: ${pc:.4f}")
 
-    # --- Flujo principal: trade EMA21 + EMA89 + RSI14 ---
-    _trade_ema_rsi(simbolo, t, pc, df_4h)
+    # --- Flujo principal: EMA21 + EMA89 + EMA200 ---
+    _trade_ema_rsi(simbolo, pc, df_4h)
 
     with lock:
         tiene_pos = any(p["simbolo"] == simbolo for p in estado["posiciones"])
