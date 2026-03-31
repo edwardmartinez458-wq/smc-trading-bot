@@ -204,25 +204,6 @@ def actualizar_tendencia_btc():
             log.error(f"Tendencia BTC: {e}")
         time.sleep(30 * 60)
 
-def filtro_tendencia_btc(dir_operacion: str) -> bool:
-    """
-    Solo permite operaciones LONG (alcistas).
-    Ademas filtra que BTC este sobre EMA200 en 4H.
-    """
-    # Solo LONG — bloquear cualquier SHORT
-    if dir_operacion != "alcista":
-        log.info(f"Filtro LONG-only: operacion {dir_operacion} bloqueada — este bot solo abre LONGs")
-        return False
-
-    with lock:
-        t_btc = estado["tendencia_btc"]
-
-    if t_btc == "alcista":
-        return True
-
-    log.info(f"Filtro BTC EMA50: tendencia {t_btc} — LONG bloqueado hasta que BTC supere EMA50")
-    return False
-
 # ─── TELEGRAM ────────────────────────────────────────────────────────────────
 
 def tg(msg: str):
@@ -1549,11 +1530,6 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     ema89_v = ema89.iloc[-1]
 
     log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} RSI={rsi:.1f}")
-
-    # Filtro tendencia BTC alineada
-    if not filtro_tendencia_btc(t):
-        log.info(f"{simbolo} — RECHAZADO: filtro BTC (par={t}, BTC={estado['tendencia_btc']})")
-        return
 
     # LONG: EMA21 > EMA89 + RSI entre 45-70 + precio sobre EMA21
     if t == "alcista":
