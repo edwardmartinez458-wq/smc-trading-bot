@@ -1474,64 +1474,69 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         log.info(f"{simbolo} — sin suficientes velas 4H para EMA89")
         return
 
-    # Calcular EMA21 y EMA89
-    ema21 = df_4h["close"].ewm(span=21, adjust=False).mean()
-    ema89 = df_4h["close"].ewm(span=89, adjust=False).mean()
-    rsi   = calcular_rsi(df_4h)
-
+    # EMA21 / EMA89 en 4H — estructura de tendencia
+    ema21   = df_4h["close"].ewm(span=21, adjust=False).mean()
+    ema89   = df_4h["close"].ewm(span=89, adjust=False).mean()
     ema21_v = ema21.iloc[-1]
     ema89_v = ema89.iloc[-1]
 
-    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} RSI={rsi:.1f}")
+    # RSI, ADX y divergencia en 1H — mas reactivos a movimientos recientes
+    df_1h = velas(simbolo, "60", 60)
+    if df_1h.empty or len(df_1h) < 30:
+        log.info(f"{simbolo} — sin suficientes velas 1H")
+        return
+    rsi = calcular_rsi(df_1h)
+    adx = calcular_adx(df_1h)
 
-    # LONG: EMA21 > EMA89 + precio sobre EMA21 + RSI 35-80
+    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} | RSI 1H={rsi:.1f} ADX 1H={adx:.1f}")
+
+    # LONG: EMA21 > EMA89 en 4H + precio sobre EMA21 + RSI 1H 35-80
     if t == "alcista":
         if ema21_v <= ema89_v:
-            log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin tendencia alcista 4H)")
+            log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin estructura alcista 4H)")
             return
         if rsi < 35 or rsi > 80:
-            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (35-80)")
+            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango LONG (35-80)")
             return
         if pc < ema21_v:
-            log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
+            log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 4H (pc=${pc:.4f} < ${ema21_v:.4f})")
             return
 
-    # SHORT: EMA21 < EMA89 + RSI entre 30-55 + precio bajo EMA21
+    # SHORT: EMA21 < EMA89 en 4H + precio bajo EMA21 + RSI 1H 20-65
     elif t == "bajista":
         if ema21_v >= ema89_v:
-            log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin tendencia bajista 4H)")
+            log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin estructura bajista 4H)")
             return
-        if rsi > 60 or rsi < 25:
-            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (25-60)")
+        if rsi > 65 or rsi < 20:
+            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT (20-65)")
             return
         if pc > ema21_v:
-            log.info(f"{simbolo} — RECHAZADO: precio sobre EMA21 (pc=${pc:.4f} > ${ema21_v:.4f})")
+            log.info(f"{simbolo} — RECHAZADO: precio sobre EMA21 4H (pc=${pc:.4f} > ${ema21_v:.4f})")
             return
 
-    # Filtro ATR minimo — mercado debe tener volatilidad suficiente
+    # Filtro ATR minimo en 4H — volatilidad estructural
     atr = calcular_atr(df_4h)
     if atr / pc < 0.015:
-        log.info(f"{simbolo} — RECHAZADO: ATR {atr/pc*100:.2f}% < 1.5% (mercado sin volatilidad)")
+        log.info(f"{simbolo} — RECHAZADO: ATR 4H {atr/pc*100:.2f}% < 1.5% (mercado sin volatilidad)")
         return
 
-    # Filtro ADX — tendencia debe tener fuerza real (evita entradas en lateral)
-    adx = calcular_adx(df_4h)
+    # Filtro ADX en 1H — tendencia con fuerza real en el corto plazo
     if adx < 20:
-        log.info(f"{simbolo} — RECHAZADO: ADX {adx:.1f} < 20 (tendencia debil/lateral)")
+        log.info(f"{simbolo} — RECHAZADO: ADX 1H {adx:.1f} < 20 (tendencia debil/lateral)")
         return
 
-    # Filtro divergencia RSI — evita entrar en agotamiento de tendencia
-    if hay_divergencia_rsi(df_4h, t):
-        log.info(f"{simbolo} — RECHAZADO: divergencia RSI detectada (agotamiento de tendencia)")
+    # Filtro divergencia RSI en 1H — evita entrar en agotamiento reciente
+    if hay_divergencia_rsi(df_1h, t):
+        log.info(f"{simbolo} — RECHAZADO: divergencia RSI 1H detectada (agotamiento de tendencia)")
         return
 
-    # Confirmacion 1H — vela con cuerpo real + cierre sobre/bajo EMA21
-    df_1h = velas(simbolo, "60", 30)
-    if df_1h.empty or not confirma_1h(df_1h, t):
-        log.info(f"{simbolo} — RECHAZADO: 1H no confirma direccion {t}")
+    # Confirmacion 15min — entrada precisa con velas recientes
+    df_15m = velas(simbolo, "15", 50)
+    if df_15m.empty or not confirma_1h(df_15m, t):
+        log.info(f"{simbolo} — RECHAZADO: 15min no confirma direccion {t}")
         return
 
-    log.info(f"{simbolo} — EMA+RSI+1H OK — consultando IA...")
+    log.info(f"{simbolo} — EMA 4H + RSI/ADX 1H + 15min OK — consultando IA...")
     ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
     ia = filtro_ia(simbolo, t, pc, ob_ctx, 0)
 
