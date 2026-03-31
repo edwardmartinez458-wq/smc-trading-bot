@@ -184,20 +184,15 @@ def obtener_funding_rate(simbolo: str) -> str:
 # ─── FILTRO TENDENCIA BTC ─────────────────────────────────────────────────────
 
 def actualizar_tendencia_btc():
-    """Actualiza la tendencia de BTC cada 30 min usando EMA50 en 4H"""
+    """Actualiza la tendencia de BTC cada 30 min usando MA20 en diario — mismo criterio que analizar()"""
     while True:
         try:
-            df = velas("XBTUSDTM", "240", 60)
-            if not df.empty and len(df) >= 50:
-                ema50 = df["close"].ewm(span=50, adjust=False).mean().iloc[-1]
-                precio_actual = df["close"].iloc[-1]
-                # Filtro EMA50: precio sobre EMA50 = alcista, bajo = bajista
-                if precio_actual > ema50:
-                    t = "alcista"
-                    log.info(f"BTC sobre EMA50 (${precio_actual:.0f} > ${ema50:.0f}) — tendencia ALCISTA")
-                else:
-                    t = "bajista"
-                    log.info(f"BTC bajo EMA50 (${precio_actual:.0f} < ${ema50:.0f}) — tendencia BAJISTA")
+            df = velas("XBTUSDTM", "1440", 50)
+            if not df.empty and len(df) >= 20:
+                t = tendencia(df)
+                pc   = df["close"].iloc[-1]
+                ma20 = df["close"].values[-20:].mean()
+                log.info(f"BTC tendencia diaria: {t.upper()} | precio ${pc:.0f} vs MA20 ${ma20:.0f}")
                 with lock:
                     estado["tendencia_btc"] = t
         except Exception as e:
@@ -1852,6 +1847,10 @@ def api_estado():
         trump_t  = estado["ultimo_trump_texto"]
         trump_d  = estado["trump_direccion"]
         trump_a  = estado["trump_alerta_activa"]
+        fed_t    = estado["fed_texto"]
+        fed_d    = estado["fed_direccion"]
+        liq_t    = estado["liq_texto"]
+        ball_t   = estado["ballena_texto"]
         t_btc    = estado["tendencia_btc"]
         ciclo    = estado["ciclo"]
 
@@ -1899,6 +1898,10 @@ def api_estado():
         "trump_texto":       trump_t[:150] if trump_t else "",
         "trump_direccion":   trump_d,
         "trump_alerta":      trump_a,
+        "fed_texto":         fed_t[:150] if fed_t else "",
+        "fed_direccion":     fed_d,
+        "liq_texto":         liq_t[:150] if liq_t else "",
+        "ballena_texto":     ball_t[:150] if ball_t else "",
         "tendencia_btc":     t_btc,
         "horario_ok":        en_horario_operacion(),
         "hora_venezuela":    hora_venezuela(),
