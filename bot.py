@@ -897,14 +897,14 @@ def leer_memoria_trades(simbolo: str, n: int = 5) -> str:
 # ─── SMC ──────────────────────────────────────────────────────────────────────
 
 def tendencia(df: pd.DataFrame, pc: float = None) -> str:
-    """Tendencia diaria usando MA20 con umbral 0.8%.
-    Usa precio actual (pc) si se provee, para evitar depender del cierre de ayer."""
+    """Tendencia diaria usando MA20.
+    LONG: precio > MA20 + 2.5% | SHORT: precio < MA20 - 1.5%"""
     if len(df) < 20: return "lateral"
     c    = df["close"].values
     ma20 = c[-20:].mean()
     ref  = pc if pc else c[-1]
-    if ref > ma20 * 1.008: return "alcista"
-    if ref < ma20 * 0.992: return "bajista"
+    if ref > ma20 * 1.025: return "alcista"
+    if ref < ma20 * 0.985: return "bajista"
     return "lateral"
 
 def calcular_adx(df: pd.DataFrame, periodo: int = 14) -> float:
@@ -1097,11 +1097,10 @@ def abrir(simbolo, t, pc, ia):
     # SL basado en ATR (volatilidad real) — 2x ATR del 4H
     df_4h_sl = velas(simbolo, "240", 30)
     atr_val  = calcular_atr(df_4h_sl) if not df_4h_sl.empty else 0
-    sl_dist  = max(atr_val * 2, pc * 0.03)  # minimo 3% si ATR es muy pequeno
+    sl_dist  = max(atr_val * 1.5, pc * 0.02)  # v3f: 1.5x ATR
     sl_pct   = sl_dist / pc
-    # TP parcial: TP1 a 1.5x ATR (asegurar ganancia), TP2 a 3x ATR (objetivo final)
-    tp1_dist = max(atr_val * 1.5, pc * 0.015)  # minimo 1.5%
-    tp2_dist = max(atr_val * 3.0, pc * 0.03)   # minimo 3%
+    tp1_dist = max(atr_val * 1.5, pc * 0.02)  # v3f: R:R 1:1
+    tp2_dist = max(atr_val * 1.5, pc * 0.02)  # mismo que TP1 (unico TP)
     sl  = round(pc - sl_dist  if lado == "buy" else pc + sl_dist,  6)
     tp1 = round(pc + tp1_dist if lado == "buy" else pc - tp1_dist, 6)
     tp2 = round(pc + tp2_dist if lado == "buy" else pc - tp2_dist, 6)
@@ -1490,50 +1489,71 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
 
     log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} | RSI 1H={rsi:.1f} ADX 1H={adx:.1f}")
 
-    # LONG: EMA21 > EMA89 en 4H + precio sobre EMA21 + RSI 1H 35-80
+    # EMA89 pendiente (para confirmar estructura LONG)
+    ema89_prev = df_4h["close"].ewm(span=89, adjust=False).mean().iloc[-5]
+
+    # LONG: EMA21 > EMA89 + ambas subiendo + RSI 45-68
     if t == "alcista":
         if ema21_v <= ema89_v:
             log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin estructura alcista 4H)")
             return
-        if rsi < 35 or rsi > 80:
-            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango LONG (35-80)")
+        if ema89_v <= ema89_prev:
+            log.info(f"{simbolo} — RECHAZADO: EMA89 no esta subiendo (tendencia debil)")
             return
-        if pc < ema21_v:
-            log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 4H (pc=${pc:.4f} < ${ema21_v:.4f})")
+        if rsi < 45 or rsi > 68:
+            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango LONG (45-68)")
             return
 
-    # SHORT: EMA21 < EMA89 en 4H + precio bajo EMA21 + RSI 1H 20-65
+    # SHORT: EMA21 < EMA89 + RSI 32-55
     elif t == "bajista":
         if ema21_v >= ema89_v:
             log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin estructura bajista 4H)")
             return
-        if rsi > 65 or rsi < 20:
-            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT (20-65)")
-            return
-        if pc > ema21_v:
-            log.info(f"{simbolo} — RECHAZADO: precio sobre EMA21 4H (pc=${pc:.4f} > ${ema21_v:.4f})")
+        if rsi > 55 or rsi < 32:
+            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT (32-55)")
             return
 
-    # Filtro ATR minimo en 4H — volatilidad estructural
+    # Filtro ATR minimo 4H
     atr = calcular_atr(df_4h)
     if atr / pc < 0.015:
-        log.info(f"{simbolo} — RECHAZADO: ATR 4H {atr/pc*100:.2f}% < 1.5% (mercado sin volatilidad)")
+        log.info(f"{simbolo} — RECHAZADO: ATR 4H {atr/pc*100:.2f}% < 1.5%")
         return
 
-    # Filtro ADX en 1H — tendencia con fuerza real en el corto plazo
-    if adx < 20:
-        log.info(f"{simbolo} — RECHAZADO: ADX 1H {adx:.1f} < 20 (tendencia debil/lateral)")
+    # ADX >= 28
+    if adx < 28:
+        log.info(f"{simbolo} — RECHAZADO: ADX 1H {adx:.1f} < 28 (tendencia debil)")
         return
 
-    # Filtro divergencia RSI en 1H — evita entrar en agotamiento reciente
+    # Sin divergencia RSI 1H
     if hay_divergencia_rsi(df_1h, t):
-        log.info(f"{simbolo} — RECHAZADO: divergencia RSI 1H detectada (agotamiento de tendencia)")
+        log.info(f"{simbolo} — RECHAZADO: divergencia RSI 1H detectada")
         return
 
-    # Confirmacion 15min — entrada precisa con velas recientes
+    # Confirmacion 15min — rebote desde EMA21 (3/3 velas + precio vs EMA21)
     df_15m = velas(simbolo, "15", 50)
-    if df_15m.empty or not confirma_1h(df_15m, t):
-        log.info(f"{simbolo} — RECHAZADO: 15min no confirma direccion {t}")
+    if df_15m.empty or len(df_15m) < 4:
+        log.info(f"{simbolo} — RECHAZADO: sin datos 15min")
+        return
+    ema21_15m  = df_15m["close"].ewm(span=21, adjust=False).mean().iloc[-1]
+    prev_low   = df_15m["low"].iloc[-2]
+    prev_high  = df_15m["high"].iloc[-2]
+    prev_close = df_15m["close"].iloc[-2]
+    c0 = df_15m["close"].iloc[-1]; o0 = df_15m["open"].iloc[-1]
+    c1 = df_15m["close"].iloc[-2]; o1 = df_15m["open"].iloc[-2]
+    c2 = df_15m["close"].iloc[-3]; o2 = df_15m["open"].iloc[-3]
+    velas_bull = sum([c0>o0, c1>o1, c2>o2])
+    velas_bear = sum([c0<o0, c1<o1, c2<o2])
+    if t == "alcista":
+        bounce = (prev_low <= ema21_15m * 1.008) and (pc > prev_close) and (pc > ema21_15m)
+        conf   = velas_bull == 3 and pc > ema21_15m
+    else:
+        bounce = (prev_high >= ema21_15m * 0.992) and (pc < prev_close) and (pc < ema21_15m)
+        conf   = velas_bear == 3 and pc < ema21_15m
+    if not bounce:
+        log.info(f"{simbolo} — RECHAZADO: sin rebote confirmado desde EMA21 15m")
+        return
+    if not conf:
+        log.info(f"{simbolo} — RECHAZADO: 15min no confirma (3 velas) direccion {t}")
         return
 
     log.info(f"{simbolo} — EMA 4H + RSI/ADX 1H + 15min OK — consultando IA...")
@@ -1577,11 +1597,11 @@ def analizar(simbolo: str):
 
     t = tendencia(df_d, pc)
     log.info(f"{simbolo} — tendencia Daily: {t} | precio: ${pc:.4f}")
-    if t != "alcista":
-        log.info(f"{simbolo} — RECHAZADO: bot LONG solo opera con tendencia alcista (actual: {t})")
+    if t == "lateral":
+        log.info(f"{simbolo} — RECHAZADO: mercado lateral, sin operacion")
         return
 
-    # --- Flujo principal: trade EMA21 + EMA89 + RSI14 ---
+    # Opera LONG en alcista y SHORT en bajista
     _trade_ema_rsi(simbolo, t, pc, df_4h)
 
 
