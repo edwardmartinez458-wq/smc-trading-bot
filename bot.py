@@ -905,8 +905,8 @@ def tendencia(df: pd.DataFrame) -> str:
     if len(df) < 20: return "lateral"
     c = df["close"].values
     ma20 = c[-20:].mean()
-    if c[-1] > ma20 * 1.002: return "alcista"
-    if c[-1] < ma20 * 0.998: return "bajista"
+    if c[-1] > ma20 * 1.02: return "alcista"
+    if c[-1] < ma20 * 0.98: return "bajista"
     return "lateral"
 
 def calcular_adx(df: pd.DataFrame, periodo: int = 14) -> float:
