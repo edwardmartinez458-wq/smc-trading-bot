@@ -1065,20 +1065,17 @@ def sesion_activa() -> str:
     return "fuera"
 
 def confirma_1h(df: pd.DataFrame, t: str) -> bool:
-    """Confirmacion 1H: ultima vela con cuerpo real + cierre sobre/bajo EMA21."""
+    """Confirmacion 1H: 2 de las ultimas 3 velas en la direccion correcta + precio bajo/sobre EMA21."""
     if len(df) < 21: return False
     c = df["close"].values
     o = df["open"].values
-    h = df["high"].values
-    l = df["low"].values
     ema21 = df["close"].ewm(span=21, adjust=False).mean().iloc[-1]
-    cuerpo = abs(c[-1] - o[-1])
-    rango  = h[-1] - l[-1]
-    cuerpo_real = rango > 0 and (cuerpo / rango) >= 0.4
     if t == "alcista":
-        return c[-1] > o[-1] and cuerpo_real and c[-1] > ema21
+        velas_ok = sum(1 for i in [-1, -2, -3] if c[i] > o[i]) >= 2
+        return velas_ok and c[-1] > ema21
     if t == "bajista":
-        return c[-1] < o[-1] and cuerpo_real and c[-1] < ema21
+        velas_ok = sum(1 for i in [-1, -2, -3] if c[i] < o[i]) >= 2
+        return velas_ok and c[-1] < ema21
     return False
 
 # ─── FILTRO IA ────────────────────────────────────────────────────────────────
