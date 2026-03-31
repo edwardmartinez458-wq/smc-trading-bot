@@ -897,14 +897,14 @@ def leer_memoria_trades(simbolo: str, n: int = 5) -> str:
 # ─── SMC ──────────────────────────────────────────────────────────────────────
 
 def tendencia(df: pd.DataFrame, pc: float = None) -> str:
-    """Tendencia diaria usando MA20 con umbral 2%.
+    """Tendencia diaria usando MA20 con umbral 0.8%.
     Usa precio actual (pc) si se provee, para evitar depender del cierre de ayer."""
     if len(df) < 20: return "lateral"
     c    = df["close"].values
     ma20 = c[-20:].mean()
     ref  = pc if pc else c[-1]
-    if ref > ma20 * 1.02: return "alcista"
-    if ref < ma20 * 0.98: return "bajista"
+    if ref > ma20 * 1.008: return "alcista"
+    if ref < ma20 * 0.992: return "bajista"
     return "lateral"
 
 def calcular_adx(df: pd.DataFrame, periodo: int = 14) -> float:
@@ -1194,7 +1194,7 @@ def abrir(simbolo, t, pc, ia):
         capital_pct = 0.40  # 40% — confianza baja
     riesgo_usdt = estado["capital"] * capital_pct * sl_pct
     log.info(f"{simbolo} — confianza {confianza}% → capital {capital_pct*100:.0f}% | riesgo max ${riesgo_usdt:.2f}")
-    g_pot = riesgo_usdt * (TP_PCT / SL_PCT)
+    g_pot = riesgo_usdt * (tp2_dist / sl_dist)
     p_pot = riesgo_usdt
 
     margen = round(estado["capital"] * capital_pct, 2)
@@ -1471,9 +1471,13 @@ def _sincronizar_con_kucoin():
                 continue
             entrada = float(pk.get("avgEntryPrice", 0))
             margen  = abs(float(pk.get("posMargin", 0)))
-            # Leer SL/TP reales desde las ordenes activas en KuCoin
-            sl = round(entrada * (1 - SL_PCT) if dir_ == "LONG" else entrada * (1 + SL_PCT), 6)
-            tp = round(entrada * (1 + TP_PCT) if dir_ == "LONG" else entrada * (1 - TP_PCT), 6)
+            # SL/TP estimados con ATR real del par
+            _df4h_r = velas(simbolo, "240", 30)
+            _atr_r  = calcular_atr(_df4h_r) if not _df4h_r.empty else 0
+            _sl_d   = max(_atr_r * 2, entrada * 0.03)
+            _tp_d   = max(_atr_r * 3.0, entrada * 0.03)
+            sl = round(entrada - _sl_d if dir_ == "LONG" else entrada + _sl_d, 6)
+            tp = round(entrada + _tp_d if dir_ == "LONG" else entrada - _tp_d, 6)
             sl_oid, tp_oid = None, None
             try:
                 ords = kc_get("/api/v1/stopOrders", {"symbol": simbolo, "status": "active"})
@@ -1556,13 +1560,13 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
 
     log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} RSI={rsi:.1f}")
 
-    # LONG: EMA21 > EMA89 + RSI entre 45-70 + precio sobre EMA21
+    # LONG: EMA21 > EMA89 + precio sobre EMA21 + RSI 35-80
     if t == "alcista":
         if ema21_v <= ema89_v:
             log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin tendencia alcista 4H)")
             return
-        if rsi < 40 or rsi > 75:
-            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (40-75)")
+        if rsi < 35 or rsi > 80:
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (35-80)")
             return
         if pc < ema21_v:
             log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
@@ -1761,10 +1765,13 @@ def verificar_inicio():
                     continue
                 entrada = float(pk.get("avgEntryPrice", 0))
                 pc_     = float(pk.get("markPrice", entrada))
-                sl_pct_ = SL_PCT
-                tp_pct_ = TP_PCT
-                sl = round(entrada * (1 - sl_pct_) if dir_ == "LONG" else entrada * (1 + sl_pct_), 6)
-                tp = round(entrada * (1 + tp_pct_) if dir_ == "LONG" else entrada * (1 - tp_pct_), 6)
+                # SL/TP estimados con ATR real del par
+                _df4h_i = velas(simbolo, "240", 30)
+                _atr_i  = calcular_atr(_df4h_i) if not _df4h_i.empty else 0
+                _sl_d_i = max(_atr_i * 2, entrada * 0.03)
+                _tp_d_i = max(_atr_i * 3.0, entrada * 0.03)
+                sl = round(entrada - _sl_d_i if dir_ == "LONG" else entrada + _sl_d_i, 6)
+                tp = round(entrada + _tp_d_i if dir_ == "LONG" else entrada - _tp_d_i, 6)
                 margen = abs(float(pk.get("posMargin", 0)))
                 ya_existe = any(p["simbolo"] == simbolo for p in estado["posiciones"])
                 if not ya_existe:
