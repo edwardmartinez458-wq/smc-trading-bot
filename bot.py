@@ -12,7 +12,7 @@ MEJORAS v2:
 - Ciclo cada 5-15 min (aleatorio)
 - Filtro tendencia mayor BTC
 - Stop loss global 10% diario
-- Sin operar 2am-6am hora Chile
+- Opera 24/7 hora Venezuela (UTC-4)
 """
 
 import os, time, logging, requests, hmac, hashlib, json, threading, base64, random
@@ -114,8 +114,8 @@ _CERRADA_TTL = 300  # 5 minutos
 
 # ─── UTILIDADES HORARIO ───────────────────────────────────────────────────────
 
-def hora_chile() -> int:
-    """Retorna hora actual en UTC-4 (Venezuela, sin cambio de horario)"""
+def hora_venezuela() -> int:
+    """Retorna hora actual en UTC-4 (Venezuela)"""
     from datetime import timezone, timedelta
     tz_fija = timezone(timedelta(hours=-4))
     return datetime.now(tz_fija).hour
@@ -288,10 +288,10 @@ def manejar_comando(texto: str):
             tg("No hay posts recientes de Trump detectados.")
 
     elif texto == "/horario":
-        h = hora_chile()
+        h = hora_venezuela()
         operando = en_horario_operacion()
-        tg(f"Hora Chile: {h}:00\n"
-           f"Horario de operacion: 6am - 2am\n"
+        tg(f"Hora Venezuela: {h}:00\n"
+           f"Horario: 24/7 sin restriccion\n"
            f"Estado: {'OPERANDO' if operando else 'PAUSADO (hora de descanso)'}")
 
 # ─── TRUMP MONITOR ────────────────────────────────────────────────────────────
@@ -1127,7 +1127,7 @@ SENAL:
 Par: {simbolo} | Fecha: {datetime.now().strftime('%Y-%m-%d %A')} | Mes: {datetime.now().month}
 Tendencia Daily: {t} | Tendencia BTC: {t_btc} | Precio: ${pc:.4f}
 Order Block: ${ob['zona_baja']:.4f} - ${ob['zona_alta']:.4f}
-Direccion: {'LONG' if t == 'alcista' else 'SHORT'} | Hora Chile: {hora_chile()}h
+Direccion: {'LONG' if t == 'alcista' else 'SHORT'} | Hora Venezuela: {hora_venezuela()}h
 Sesion activa: {sesion} | RSI 4H: {rsi_actual}
 {fear_greed}
 {funding}
@@ -1344,7 +1344,7 @@ def _cerrar_posicion(p: dict, pc: float):
     t_btc = estado.get("tendencia_btc", "lateral")
     tendencia_invertida = (p["dir"] == "SHORT" and t_btc == "alcista") or \
                           (p["dir"] == "LONG"  and t_btc == "bajista")
-    if tendencia_invertida and p.get("tipo") != "recuperada":
+    if tendencia_invertida:
         log.info(f"{p['simbolo']} — CIERRE por cambio tendencia BTC ({t_btc}) contra {p['dir']}")
         tp_ok = False
         sl_ok = True  # se trata como SL para el calculo de PnL real
@@ -1500,6 +1500,23 @@ def _sincronizar_con_kucoin():
                 estado["ops_total"] += 1  # contar para que WR no sea 0/0
             log.warning(f"Sync: POSICION RECUPERADA {simbolo} {dir_} entrada=${entrada:.4f} sl=${sl} tp=${tp}")
             tg(f"POSICION RECUPERADA: {simbolo} {dir_} @ ${entrada:.4f} | SL ${sl} | TP ${tp}")
+            # Si posicion recuperada va contra la direccion del bot (LONG only) — cerrar
+            if dir_ == "SHORT":
+                log.warning(f"Posicion recuperada SHORT en bot LONG — cerrando {simbolo}")
+                tg(f"Posicion SHORT recuperada en {simbolo} va contra bot LONG — cerrando automaticamente")
+                # Cerrar inmediatamente via orden de mercado
+                try:
+                    kc_post("/api/v1/orders", {
+                        "clientOid":  f"close_{int(time.time()*1000)}",
+                        "symbol":     simbolo,
+                        "side":       "buy",
+                        "type":       "market",
+                        "size":       abs(int(qty)),
+                        "reduceOnly": True,
+                    })
+                except Exception as e:
+                    log.error(f"Error cerrando posicion recuperada SHORT: {e}")
+                continue
 
     except Exception as e:
         log.error(f"Sincronizacion KuCoin: {e}")
@@ -1602,7 +1619,7 @@ def analizar(simbolo: str):
             return
 
     if not en_horario_operacion():
-        log.info(f"{simbolo} — fuera de horario ({hora_chile()}h Chile)")
+        log.info(f"{simbolo} — fuera de horario ({hora_venezuela()}h Venezuela)")
         return
 
     df_d  = velas(simbolo, "1440", 50)
@@ -1803,7 +1820,7 @@ def verificar_inicio():
        f"Capital dinamico: 40/70/100% segun confianza IA\n"
        f"Trailing stop: activa desde +15%\n"
        f"SL diario: {SL_DIARIO_PCT*100:.0f}% | Max posiciones: {MAX_POSICIONES}\n"
-       f"Ciclo: 5-15 min | Horario: 6am-2am Chile\n\n"
+       f"Ciclo: 5-15 min | Horario: 24/7\n\n"
        f"{', '.join(pares_ok)}\n\nActivo 24/7 en Railway")
 
 # ─── DASHBOARD API ────────────────────────────────────────────────────────────
@@ -1884,7 +1901,7 @@ def api_estado():
         "trump_alerta":      trump_a,
         "tendencia_btc":     t_btc,
         "horario_ok":        en_horario_operacion(),
-        "hora_chile":        hora_chile(),
+        "hora_venezuela":    hora_venezuela(),
         "ciclo":             ciclo,
         "timestamp":         datetime.now().isoformat(),
     })
@@ -2047,7 +2064,7 @@ def main():
             estado["ciclo"] += 1
             ciclo = estado["ciclo"]
 
-        log.info(f"CICLO {ciclo} | {datetime.now().strftime('%Y-%m-%d %H:%M')} | Chile: {hora_chile()}h")
+        log.info(f"CICLO {ciclo} | {datetime.now().strftime('%Y-%m-%d %H:%M')} | Venezuela: {hora_venezuela()}h")
 
         # Verificar balance real en KuCoin Futuros cada 5 ciclos
         if ciclo % 5 == 1:
@@ -2061,7 +2078,7 @@ def main():
 
         # Verificar horario antes de analizar
         if not en_horario_operacion():
-            log.info(f"Fuera de horario ({hora_chile()}h Chile) — esperando 6am, sin operar")
+            log.info(f"Horario 24/7 activo ({hora_venezuela()}h Venezuela)")
         else:
             for s in estado["pares_activos"]:
                 try:
