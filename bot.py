@@ -940,66 +940,6 @@ def calcular_adx(df: pd.DataFrame, periodo: int = 14) -> float:
     return round(adx, 2)
 
 
-def hay_bos(df4h: pd.DataFrame, t: str, simbolo: str = "") -> bool:
-    # BOS: 2 velas consecutivas de 15min en la misma direccion
-    try:
-        if simbolo:
-            df15 = velas(simbolo, "15", 10)
-            if not df15.empty and len(df15) >= 4:
-                c = df15["close"].values
-                o = df15["open"].values
-                if t == "alcista" and sum(1 for i in [-1,-2,-3] if c[i]>o[i]) >= 2:
-                    return True
-                if t == "bajista" and sum(1 for i in [-1,-2,-3] if c[i]<o[i]) >= 2:
-                    return True
-    except Exception:
-        pass
-    # Fallback sin requisito de volumen
-    if len(df4h) < 20: return False
-    u  = df4h.tail(20)
-    pc = u["close"].iloc[-1]
-    if t == "alcista": return pc > u["high"].iloc[:-3].max()
-    if t == "bajista": return pc < u["low"].iloc[:-3].min()
-    return False
-
-def buscar_ob(df: pd.DataFrame, t: str) -> dict:
-    empty = {"zona_alta": 0, "zona_baja": 0, "valido": False}
-    if len(df) < 30: return empty
-    for i in range(len(df) - 5, max(len(df) - 45, 0), -1):
-        v, s = df.iloc[i], df.iloc[i+1]
-        if t == "alcista" and v["close"] < v["open"] and (s["close"]-s["open"]) > s["open"]*0.002:
-            return {"zona_alta": v["open"], "zona_baja": v["close"], "valido": True}
-        if t == "bajista" and v["close"] > v["open"] and (v["open"]-s["close"]) > s["open"]*0.002:
-            return {"zona_alta": v["close"], "zona_baja": v["open"], "valido": True}
-    return empty
-
-def en_ob(pc: float, ob: dict, t: str = "") -> bool:
-    if not ob["valido"]: return False
-    # SHORT: acepta precio hasta 5% por debajo del OB (ya lo rompió)
-    if t == "bajista":
-        return pc <= ob["zona_alta"] and pc >= ob["zona_baja"] * 0.95
-    # LONG: acepta precio hasta 5% por encima del OB (ya lo rompió al alza)
-    if t == "alcista":
-        return pc >= ob["zona_baja"] and pc <= ob["zona_alta"] * 1.05
-    # Fallback generico
-    m = (ob["zona_alta"] - ob["zona_baja"]) * 0.5
-    return (ob["zona_baja"] - m) <= pc <= (ob["zona_alta"] + m)
-
-def contar_toques(df: pd.DataFrame, ob: dict, t: str) -> int:
-    if not ob["valido"]: return 0
-    toques = 0
-    zb, za = ob["zona_baja"] * 0.985, ob["zona_alta"] * 1.015
-    u = df.tail(40).reset_index(drop=True)
-    i = 0
-    while i < len(u) - 1:
-        v, s = u.iloc[i], u.iloc[i+1]
-        if t == "alcista" and zb <= v["low"] <= za and s["close"] > s["open"]:
-            toques += 1; i += 2; continue
-        if t == "bajista" and zb <= v["high"] <= za and s["close"] < s["open"]:
-            toques += 1; i += 2; continue
-        i += 1
-    return toques
-
 def calcular_atr(df: pd.DataFrame, periodo: int = 14) -> float:
     """ATR (Average True Range) — mide la volatilidad real del mercado."""
     if len(df) < periodo + 1: return 0.0
@@ -1037,22 +977,6 @@ def hay_divergencia_rsi(df: pd.DataFrame, t: str) -> bool:
         # Precio baja pero RSI sube = agotamiento bajista (divergencia alcista)
         return pc_rec < pc_ant and rsi_rec > rsi_ant + 5
     return False
-
-def buscar_fvg(df: pd.DataFrame, t: str) -> dict:
-    """Fair Value Gap: zona de desequilibrio entre 3 velas consecutivas."""
-    empty = {"zona_alta": 0, "zona_baja": 0, "valido": False}
-    if len(df) < 10: return empty
-    for i in range(len(df) - 3, max(len(df) - 20, 0), -1):
-        v1, v2, v3 = df.iloc[i], df.iloc[i+1], df.iloc[i+2]
-        if t == "alcista":
-            # FVG alcista: low de v3 > high de v1 (hueco entre v1 y v3)
-            if v3["low"] > v1["high"] and v2["close"] > v2["open"]:
-                return {"zona_alta": v3["low"], "zona_baja": v1["high"], "valido": True}
-        if t == "bajista":
-            # FVG bajista: high de v3 < low de v1 (hueco entre v1 y v3)
-            if v3["high"] < v1["low"] and v2["close"] < v2["open"]:
-                return {"zona_alta": v1["low"], "zona_baja": v3["high"], "valido": True}
-    return empty
 
 def sesion_activa() -> str:
     """Retorna la sesion de mercado activa: Asia, Londres, NY, o fuera."""
@@ -1588,6 +1512,17 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     atr = calcular_atr(df_4h)
     if atr / pc < 0.015:
         log.info(f"{simbolo} — RECHAZADO: ATR {atr/pc*100:.2f}% < 1.5% (mercado sin volatilidad)")
+        return
+
+    # Filtro ADX — tendencia debe tener fuerza real (evita entradas en lateral)
+    adx = calcular_adx(df_4h)
+    if adx < 20:
+        log.info(f"{simbolo} — RECHAZADO: ADX {adx:.1f} < 20 (tendencia debil/lateral)")
+        return
+
+    # Filtro divergencia RSI — evita entrar en agotamiento de tendencia
+    if hay_divergencia_rsi(df_4h, t):
+        log.info(f"{simbolo} — RECHAZADO: divergencia RSI detectada (agotamiento de tendencia)")
         return
 
     # Confirmacion 1H — vela con cuerpo real + cierre sobre/bajo EMA21
