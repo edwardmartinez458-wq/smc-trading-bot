@@ -1807,7 +1807,7 @@ def verificar_inicio():
     tg(f"SMC BOT v13 INICIADO\n\n"
        f"Pares: {len(pares_ok)} | Capital: ${estado['capital']:.2f} USDT\n"
        f"x{estado['apalancamiento']} | TP: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}%\n"
-       f"Capital dinamico: 50/75/100% segun confianza IA\n"
+       f"Capital dinamico: 40/70/100% segun confianza IA\n"
        f"Trailing stop: activa desde +15%\n"
        f"SL diario: {SL_DIARIO_PCT*100:.0f}% | Max posiciones: {MAX_POSICIONES}\n"
        f"Ciclo: 5-15 min | Horario: 6am-2am Chile\n\n"
