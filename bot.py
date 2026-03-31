@@ -1536,8 +1536,8 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         if ema21_v <= ema89_v:
             log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin tendencia alcista 4H)")
             return
-        if rsi < 45 or rsi > 70:
-            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (45-70)")
+        if rsi < 40 or rsi > 75:
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (40-75)")
             return
         if pc < ema21_v:
             log.info(f"{simbolo} — RECHAZADO: precio bajo EMA21 (pc=${pc:.4f} < ${ema21_v:.4f})")
@@ -1548,8 +1548,8 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         if ema21_v >= ema89_v:
             log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin tendencia bajista 4H)")
             return
-        if rsi > 55 or rsi < 30:
-            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (30-55)")
+        if rsi > 60 or rsi < 25:
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (25-60)")
             return
         if pc > ema21_v:
             log.info(f"{simbolo} — RECHAZADO: precio sobre EMA21 (pc=${pc:.4f} > ${ema21_v:.4f})")
