@@ -1621,8 +1621,8 @@ def analizar(simbolo: str):
 
     t = tendencia(df_d)
     log.info(f"{simbolo} — tendencia Daily: {t} | precio: ${pc:.4f}")
-    if t == "lateral":
-        log.info(f"{simbolo} — RECHAZADO: tendencia lateral")
+    if t != "alcista":
+        log.info(f"{simbolo} — RECHAZADO: bot LONG solo opera con tendencia alcista (actual: {t})")
         return
 
     # --- Flujo principal: trade EMA21 + EMA89 + RSI14 ---
