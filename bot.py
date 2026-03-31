@@ -1555,7 +1555,13 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
             log.info(f"{simbolo} — RECHAZADO: precio sobre EMA21 (pc=${pc:.4f} > ${ema21_v:.4f})")
             return
 
-    log.info(f"{simbolo} — EMA+RSI OK — consultando IA...")
+    # Confirmacion 1H — 2 de las ultimas 3 velas en la direccion correcta
+    df_1h = velas(simbolo, "60", 10)
+    if df_1h.empty or not confirma_1h(df_1h, t):
+        log.info(f"{simbolo} — RECHAZADO: 1H no confirma direccion {t}")
+        return
+
+    log.info(f"{simbolo} — EMA+RSI+1H OK — consultando IA...")
     ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
     ia = filtro_ia(simbolo, t, pc, ob_ctx, 0)
 
