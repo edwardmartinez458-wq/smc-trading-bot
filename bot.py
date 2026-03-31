@@ -95,6 +95,13 @@ estado = {
     "ultimo_trump_texto": "",
     "trump_alerta_activa": False,
     "trump_direccion":   "",
+    "fed_alerta_activa":    False,
+    "fed_texto":            "",
+    "fed_direccion":        "",
+    "liq_alerta_activa":    False,
+    "liq_texto":            "",
+    "ballena_alerta_activa": False,
+    "ballena_texto":        "",
     "tendencia_btc":     "lateral",  # Para filtro tendencia mayor
     "ciclo":             0,
     "sl_diario_activo":  False,
@@ -446,12 +453,47 @@ def monitor_fed():
             ultimo_id = p["id"]
             texto = p["texto"]
             log.info(f"Fed NOTICIA: {texto[:100]}")
-            if any(kw in texto.lower() for kw in FED_KEYWORDS):
-                tg(f"🏦 <b>RESERVA FEDERAL</b>\n\n{texto}\n\n<i>Fuente: Google News</i>")
-            time.sleep(15 * 60)
+            if not any(kw in texto.lower() for kw in FED_KEYWORDS):
+                time.sleep(15 * 60)
+                continue
+            # Analizar con IA
+            try:
+                r = ai.chat.completions.create(
+                    model="deepseek-chat",
+                    max_tokens=100,
+                    messages=[{"role": "user", "content":
+                        f"""Eres un analista macro. Determina el impacto de esta noticia de la Fed en crypto/Bitcoin.
+
+Noticia: {texto}
+
+RESPONDE EXACTAMENTE:
+IMPACTO: ALCISTA o BAJISTA o NEUTRO
+CONFIANZA: 0-100
+RAZON: una linea breve"""}]
+                )
+                lines = r.choices[0].message.content.strip().split("\n")
+                impacto, conf, razon = "NEUTRO", 0, ""
+                for l in lines:
+                    if "IMPACTO:" in l: impacto = "ALCISTA" if "ALCISTA" in l else "BAJISTA" if "BAJISTA" in l else "NEUTRO"
+                    elif "CONFIANZA:" in l:
+                        try: conf = int(l.split(":")[1].strip())
+                        except: pass
+                    elif "RAZON:" in l: razon = l.split(":", 1)[1].strip()
+            except Exception as e:
+                log.error(f"Fed IA: {e}")
+                impacto, conf, razon = "NEUTRO", 0, "IA no disponible"
+
+            activa = impacto != "NEUTRO" and conf >= 55
+            with lock:
+                estado["fed_alerta_activa"] = activa
+                estado["fed_texto"]         = texto
+                estado["fed_direccion"]     = impacto
+
+            emoji = "📈" if impacto == "ALCISTA" else "📉" if impacto == "BAJISTA" else "⚡"
+            tg(f"🏦 RESERVA FEDERAL\n\n{texto}\n\n{emoji} Impacto crypto: {impacto} ({conf}%)\n{razon}\n\n{'🎯 Bot ajustando estrategia...' if activa else 'Sin impacto significativo'}")
         except Exception as e:
             log.error(f"Monitor Fed: {e}")
-            time.sleep(15 * 60)
+        time.sleep(15 * 60)
 
 def monitor_trump():
     log.info("Monitor Trump iniciado — revisando cada 10 min")
@@ -520,7 +562,6 @@ def monitor_liquidaciones():
     ultimo_alerta = 0
     while True:
         try:
-            # CoinGlass API publica — liquidaciones totales 1h
             r = requests.get(
                 "https://open-api.coinglass.com/public/v2/liquidation_history",
                 params={"symbol": "BTC", "interval": "1h"},
@@ -537,13 +578,12 @@ def monitor_liquidaciones():
                     if total > 300_000_000 and (ahora - ultimo_alerta) > 3600:
                         ultimo_alerta = ahora
                         dir_ = "BAJISTA" if longs > shorts else "ALCISTA"
+                        texto = f"Liquidacion masiva BTC: ${total/1e6:.0f}M USD — Longs: ${longs/1e6:.0f}M, Shorts: ${shorts/1e6:.0f}M"
+                        with lock:
+                            estado["liq_alerta_activa"] = True
+                            estado["liq_texto"]         = texto
                         log.info(f"LIQUIDACION MASIVA: ${total/1e6:.0f}M — {dir_}")
-                        tg(f"💥 <b>LIQUIDACION MASIVA</b>\n\n"
-                           f"Total: ${total/1e6:.0f}M USD en 1h\n"
-                           f"Longs liquidados: ${longs/1e6:.0f}M\n"
-                           f"Shorts liquidados: ${shorts/1e6:.0f}M\n"
-                           f"Señal: {dir_}\n\n"
-                           f"<i>Posible reversión inminente</i>")
+                        tg(f"💥 LIQUIDACION MASIVA\n\n{texto}\nSeñal: {dir_}\n\n🎯 Bot considera esto en proxima entrada")
         except Exception as e:
             log.error(f"Monitor liquidaciones: {e}")
         time.sleep(15 * 60)
@@ -566,8 +606,11 @@ def monitor_ballenas():
                     kws    = ["whale", "large transfer", "billion", "moved to exchange", "wallet"]
                     if guid and guid != ultimo_id and any(kw in titulo.lower() for kw in kws):
                         ultimo_id = guid
+                        with lock:
+                            estado["ballena_alerta_activa"] = True
+                            estado["ballena_texto"]         = titulo
                         log.info(f"BALLENA: {titulo[:100]}")
-                        tg(f"🐋 <b>MOVIMIENTO BALLENA</b>\n\n{titulo}\n\n<i>Monitorear precio en proximos 30 min</i>")
+                        tg(f"🐋 MOVIMIENTO BALLENA\n\n{titulo}\n\n🎯 Bot considera esto en proxima entrada")
                         break
         except Exception as e:
             log.error(f"Monitor ballenas: {e}")
@@ -1065,10 +1108,29 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
         trump_dir      = estado["trump_direccion"]
         trump_texto    = estado["ultimo_trump_texto"]
         t_btc          = estado["tendencia_btc"]
+        fed_activa     = estado["fed_alerta_activa"]
+        fed_texto      = estado["fed_texto"]
+        fed_dir        = estado["fed_direccion"]
+        liq_activa     = estado["liq_alerta_activa"]
+        liq_texto      = estado["liq_texto"]
+        ballena_activa = estado["ballena_alerta_activa"]
+        ballena_texto  = estado["ballena_texto"]
 
     trump_contexto = ""
     if trump_activa and trump_texto:
         trump_contexto = f"\nALERTA TRUMP ACTIVA: Post reciente dice '{trump_texto[:150]}' → impacto estimado {trump_dir}"
+
+    fed_contexto = ""
+    if fed_activa and fed_texto:
+        fed_contexto = f"\nALERTA FED ACTIVA: '{fed_texto[:150]}' → impacto estimado {fed_dir}"
+
+    liq_contexto = ""
+    if liq_activa and liq_texto:
+        liq_contexto = f"\nALERTA LIQUIDACION MASIVA: {liq_texto[:150]}"
+
+    ballena_contexto = ""
+    if ballena_activa and ballena_texto:
+        ballena_contexto = f"\nALERTA BALLENA: '{ballena_texto[:150]}'"
 
     memoria_contexto  = leer_memoria_trades(simbolo)
     fear_greed        = obtener_fear_greed()
@@ -1091,7 +1153,7 @@ Direccion: {'LONG' if t == 'alcista' else 'SHORT'} | Hora Chile: {hora_chile()}h
 Sesion activa: {sesion} | RSI 4H: {rsi_actual}
 {fear_greed}
 {funding}
-{trump_contexto}
+{trump_contexto}{fed_contexto}{liq_contexto}{ballena_contexto}
 {memoria_contexto}
 
 ANALIZA:
@@ -1099,7 +1161,7 @@ ANALIZA:
 2. El Funding Rate indica posicionamiento extremo que pueda revertirse?
 3. La tendencia BTC apoya la entrada?
 4. El RSI indica sobrecompra/sobreventa extrema que contradiga la entrada?
-5. La alerta Trump (si existe) apoya o contradice la entrada?
+5. Las alertas activas (Trump/Fed/Liquidaciones/Ballenas) apoyan o contradicen la entrada?
 6. El historial de trades previos apoya o desaconseja esta entrada?
 
 RESPONDE EXACTAMENTE (sin texto extra):
