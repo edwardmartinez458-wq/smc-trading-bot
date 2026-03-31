@@ -1065,15 +1065,20 @@ def sesion_activa() -> str:
     return "fuera"
 
 def confirma_1h(df: pd.DataFrame, t: str) -> bool:
-    # Confirmacion: 2 de las ultimas 3 velas de 15min en la misma direccion
-    if len(df) < 4: return False
-    c, o = df["close"].values, df["open"].values
+    """Confirmacion 1H: ultima vela con cuerpo real + cierre sobre/bajo EMA21."""
+    if len(df) < 21: return False
+    c = df["close"].values
+    o = df["open"].values
+    h = df["high"].values
+    l = df["low"].values
+    ema21 = df["close"].ewm(span=21, adjust=False).mean().iloc[-1]
+    cuerpo = abs(c[-1] - o[-1])
+    rango  = h[-1] - l[-1]
+    cuerpo_real = rango > 0 and (cuerpo / rango) >= 0.4
     if t == "alcista":
-        alcistas = sum(1 for i in [-1,-2,-3] if c[i] > o[i])
-        return alcistas >= 2
+        return c[-1] > o[-1] and cuerpo_real and c[-1] > ema21
     if t == "bajista":
-        bajistas = sum(1 for i in [-1,-2,-3] if c[i] < o[i])
-        return bajistas >= 2
+        return c[-1] < o[-1] and cuerpo_real and c[-1] < ema21
     return False
 
 # ─── FILTRO IA ────────────────────────────────────────────────────────────────
@@ -1555,8 +1560,14 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
             log.info(f"{simbolo} — RECHAZADO: precio sobre EMA21 (pc=${pc:.4f} > ${ema21_v:.4f})")
             return
 
-    # Confirmacion 1H — 2 de las ultimas 3 velas en la direccion correcta
-    df_1h = velas(simbolo, "60", 10)
+    # Filtro ATR minimo — mercado debe tener volatilidad suficiente
+    atr = calcular_atr(df_4h)
+    if atr / pc < 0.015:
+        log.info(f"{simbolo} — RECHAZADO: ATR {atr/pc*100:.2f}% < 1.5% (mercado sin volatilidad)")
+        return
+
+    # Confirmacion 1H — vela con cuerpo real + cierre sobre/bajo EMA21
+    df_1h = velas(simbolo, "60", 30)
     if df_1h.empty or not confirma_1h(df_1h, t):
         log.info(f"{simbolo} — RECHAZADO: 1H no confirma direccion {t}")
         return
