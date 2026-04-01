@@ -1506,8 +1506,8 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         if ema21_v >= ema89_v:
             log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin estructura bajista 4H)")
             return
-        if rsi > 65 or rsi < 32:
-            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT (32-65)")
+        if rsi > 75 or rsi < 32:
+            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT (32-75)")
             return
 
     # Filtro ATR minimo 4H
@@ -1544,8 +1544,10 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         bounce = (prev_low <= ema21_15m * 1.008) and (pc > prev_close) and (pc > ema21_15m)
         conf   = velas_bull >= 2 and pc > ema21_15m
     else:
-        bounce = (prev_high >= ema21_15m * 0.992) and (pc < prev_close) and (pc < ema21_15m)
-        conf   = velas_bear >= 2 and pc < ema21_15m
+        toco_ema  = (prev_high >= ema21_15m * 0.992) and (pc < ema21_15m)
+        cerca_ema = pc <= ema21_15m * 1.02
+        bounce    = (toco_ema or cerca_ema) and (pc < prev_close)
+        conf      = velas_bear >= 2 and cerca_ema
     if not bounce:
         log.info(f"{simbolo} — RECHAZADO: sin rebote confirmado desde EMA21 15m")
         return
