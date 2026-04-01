@@ -765,14 +765,17 @@ def obtener_multiplicador(simbolo: str) -> float:
     return _multiplicadores[simbolo]
 
 def calcular_cantidad(simbolo: str, pc: float, capital_pct: float = 0.50) -> int:
-    """Calcula contratos usando el multiplicador real del contrato."""
+    """Calcula contratos usando el saldo disponible real (no el equity total)."""
     with lock:
-        cap = estado["capital"]
         lev = estado["apalancamiento"]
-    mult   = obtener_multiplicador(simbolo)
-    margen = cap * capital_pct * 0.90  # 10% buffer para fees
+    mult      = obtener_multiplicador(simbolo)
+    disponible = saldo_disponible_kucoin()
+    if disponible <= 0:
+        with lock:
+            disponible = estado["capital"]
+    margen = disponible * capital_pct * 0.90  # 10% buffer para fees
     cant   = max(1, int((margen * lev) / (pc * mult)))
-    log.info(f"Capital usado: {capital_pct*100:.0f}% (${margen:.2f}) | mult={mult} | Contratos: {cant}")
+    log.info(f"Capital usado: {capital_pct*100:.0f}% (${margen:.2f}) | disponible=${disponible:.2f} | mult={mult} | Contratos: {cant}")
     return cant
 
 def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float, cant_tp: int = None) -> bool:
@@ -827,9 +830,17 @@ def balance_kucoin() -> float:
     d = kc_get("/api/v1/account-overview", {"currency": "USDT"})
     try:
         data = d["data"]
-        # accountEquity = saldo disponible + margen usado + PnL no realizado
         equity = float(data.get("accountEquity", data.get("availableBalance", 0)))
         return equity
+    except:
+        return 0.0
+
+def saldo_disponible_kucoin() -> float:
+    """Retorna solo el saldo libre (sin margen en uso). Evita insufficient balance."""
+    d = kc_get("/api/v1/account-overview", {"currency": "USDT"})
+    try:
+        data = d["data"]
+        return float(data.get("availableBalance", 0))
     except:
         return 0.0
 
