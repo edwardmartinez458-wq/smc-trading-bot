@@ -187,8 +187,8 @@ def actualizar_tendencia_btc():
     """Actualiza la tendencia de BTC cada 30 min usando MA20 en diario — mismo criterio que analizar()"""
     while True:
         try:
-            df = velas("XBTUSDTM", "1440", 50)
-            pc_real = precio("XBTUSDTM")
+            df = velas_binance("BTCUSDT", 50)
+            pc_real = precio_binance("BTCUSDT")
             if not df.empty and len(df) >= 20 and pc_real:
                 ma20 = df["close"].values[-20:].mean()
                 t    = tendencia(df, pc_real)
@@ -709,6 +709,47 @@ def precio(simbolo: str) -> float:
     d = kc_get("/api/v1/ticker", {"symbol": simbolo})
     try:
         return float(d["data"]["price"])
+    except:
+        return 0.0
+
+def _binance_sym(simbolo: str) -> str:
+    """Convierte símbolo KuCoin a formato Binance: SOLUSDTM→SOLUSDT, XBTUSDTM→BTCUSDT"""
+    s = simbolo.replace("-", "")
+    if s.endswith("M"):
+        s = s[:-1]
+    return s.replace("XBT", "BTC")
+
+def velas_binance(simbolo: str, limit: int = 50) -> pd.DataFrame:
+    """Velas diarias desde Binance — fuente neutral para tendencia."""
+    sym = _binance_sym(simbolo)
+    try:
+        r = requests.get(
+            "https://api.binance.com/api/v3/klines",
+            params={"symbol": sym, "interval": "1d", "limit": limit},
+            timeout=10
+        )
+        data = r.json()
+        if not isinstance(data, list) or not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data, columns=[
+            "ts","open","high","low","close","volume",
+            "close_ts","qav","num_trades","tbb","tbq","ignore"
+        ])
+        for col in ["open","high","low","close","volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df["ts"] = pd.to_datetime(df["ts"], unit="ms")
+        return df[["ts","open","high","low","close","volume"]].reset_index(drop=True)
+    except Exception as e:
+        log.error(f"Binance velas {sym}: {e}")
+        return pd.DataFrame()
+
+def precio_binance(simbolo: str) -> float:
+    """Precio actual desde Binance — fuente neutral."""
+    sym = _binance_sym(simbolo)
+    try:
+        r = requests.get("https://api.binance.com/api/v3/ticker/price",
+                         params={"symbol": sym}, timeout=5)
+        return float(r.json()["price"])
     except:
         return 0.0
 
@@ -1583,7 +1624,7 @@ def analizar(simbolo: str):
         log.info(f"{simbolo} — fuera de horario ({hora_venezuela()}h Venezuela)")
         return
 
-    df_d  = velas(simbolo, "1440", 50)
+    df_d  = velas_binance(simbolo, 50)
     df_4h = velas(simbolo, "240",  200)
     if df_d.empty or df_4h.empty:
         log.info(f"{simbolo} — sin datos de velas")
