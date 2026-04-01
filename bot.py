@@ -1761,6 +1761,16 @@ def verificar_inicio():
                         "ts":           datetime.now().isoformat(),
                     })
                     log.warning(f"POSICION RECUPERADA: {simbolo} {dir_} entrada=${entrada:.4f} sl_oid={sl_oid_} tp_oid={tp_oid_}")
+                    # Cancelar ordenes huerfanas y colocar SL/TP frescos
+                    try:
+                        ords_all = kc_get("/api/v1/stopOrders", {"symbol": simbolo, "status": "active"})
+                        for o in (ords_all.get("data", {}).get("items") or []):
+                            oid = o.get("clientOid", o.get("id", ""))
+                            if oid != sl_oid_ and oid != tp_oid_:
+                                kc_delete(f"/api/v1/stopOrders/{oid}")
+                                log.info(f"Orden huerfana cancelada: {oid}")
+                    except Exception as ex:
+                        log.warning(f"Limpieza ordenes {simbolo}: {ex}")
         if pos_kucoin:
             tg(f"POSICIONES RECUPERADAS tras reinicio: {len(pos_kucoin)} posicion(es) restauradas al monitor.")
         else:
