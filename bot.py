@@ -1084,8 +1084,8 @@ RAZON: una linea breve"""}]
             if intento < 2:
                 time.sleep(5)
 
-    log.warning(f"{simbolo} — IA no disponible, operacion cancelada por seguridad")
-    return {"entrar": False, "confianza": 0, "razon": "IA no disponible"}
+    log.warning(f"{simbolo} — IA no disponible, entrando con confianza base 60%")
+    return {"entrar": True, "confianza": 60, "razon": "IA no disponible - fallback"}
 
 # ─── POSICIONES ───────────────────────────────────────────────────────────────
 
@@ -1388,10 +1388,7 @@ def _sincronizar_con_kucoin():
                 continue
             qty     = float(pk.get("currentQty", 0))
             dir_    = "LONG" if qty > 0 else "SHORT"
-            # Bot LONG: ignorar posiciones SHORT (abiertas por el bot de shorts)
-            if dir_ == "SHORT":
-                log.info(f"Sync: ignorando posicion SHORT {simbolo} (bot LONG solo monitorea LONGs)")
-                continue
+            # Bot bidireccional: monitorea LONG y SHORT
             entrada = float(pk.get("avgEntryPrice", 0))
             margen  = abs(float(pk.get("posMargin", 0)))
             # SL/TP estimados con ATR real del par
@@ -1720,9 +1717,7 @@ def verificar_inicio():
                 qty     = float(pk.get("currentQty", 0))
                 dir_    = "LONG" if qty > 0 else "SHORT"
                 # Bot LONG: ignorar posiciones SHORT
-                if dir_ == "SHORT":
-                    log.info(f"Inicio: ignorando posicion SHORT {simbolo} (bot LONG solo monitorea LONGs)")
-                    continue
+                # Bot bidireccional: sincroniza LONG y SHORT
                 entrada = float(pk.get("avgEntryPrice", 0))
                 pc_     = float(pk.get("markPrice", entrada))
                 # SL/TP estimados con ATR real del par
