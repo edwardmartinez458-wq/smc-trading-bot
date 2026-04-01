@@ -903,7 +903,7 @@ def tendencia(df: pd.DataFrame, pc: float = None) -> str:
     c    = df["close"].values
     ma20 = c[-20:].mean()
     ref  = pc if pc else c[-1]
-    if ref > ma20 * 1.025: return "alcista"
+    if ref > ma20 * 1.005: return "alcista"
     if ref < ma20 * 0.995: return "bajista"
     return "lateral"
 
