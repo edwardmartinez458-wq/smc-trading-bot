@@ -1754,8 +1754,8 @@ def verificar_inicio():
                         "tp_oid":       tp_oid_,
                         "cantidad":     abs(int(qty)),
                         "margen":       round(margen, 2),
-                        "g_pot":        round(margen * tp_pct_, 2),
-                        "p_pot":        round(margen * sl_pct_, 2),
+                        "g_pot":        round(margen * (_tp_d_i / entrada), 2),
+                        "p_pot":        round(margen * (_sl_d_i / entrada), 2),
                         "confianza_ia": 0,
                         "tipo":         "recuperada",
                         "ts":           datetime.now().isoformat(),
@@ -2044,16 +2044,14 @@ def main():
 
         recalcular_capital()
 
-        # Verificar horario antes de analizar
-        if not en_horario_operacion():
-            log.info(f"Horario 24/7 activo ({hora_venezuela()}h Venezuela)")
-        else:
-            for s in estado["pares_activos"]:
-                try:
-                    analizar(s)
-                    time.sleep(3)
-                except Exception as e:
-                    log.error(f"Error analizando {s}: {e}")
+        # Analizar pares
+        log.info(f"Horario 24/7 activo ({hora_venezuela()}h Venezuela)")
+        for s in estado["pares_activos"]:
+            try:
+                analizar(s)
+                time.sleep(3)
+            except Exception as e:
+                log.error(f"Error analizando {s}: {e}")
 
         ahora = datetime.now()
         if ahora.hour == 6 and (ahora - ultimo_reporte).total_seconds() > 3600:
