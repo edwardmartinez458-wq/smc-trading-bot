@@ -35,10 +35,10 @@ DEEPSEEK_API_KEY  = os.getenv("DEEPSEEK_API_KEY")
 
 # Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
-    "XBTUSDTM",
-    "ETHUSDTM",
     "SOLUSDTM",
     "XRPUSDTM",
+    "AVAXUSDTM",
+    "DOTUSDTM",
 ]
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
