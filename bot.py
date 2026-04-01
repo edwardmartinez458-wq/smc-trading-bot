@@ -46,7 +46,7 @@ APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
 TP_PCT         = 0.15
 SL_PCT         = 0.07
 MAX_POSICIONES = 3
-CB_LIMITE      = 5
+CB_LIMITE      = 8
 BASE_URL       = "https://api-futures.kucoin.com"
 
 # Stop loss global diario: si el capital cae mas de 10% en el dia -> pausar
@@ -1350,7 +1350,9 @@ def _cerrar_posicion(p: dict, pc: float):
             estado["ops_ganadas"] += 1
             estado["perdidas_seguidas"] = 0
         else:
-            estado["perdidas_seguidas"] += 1
+            # Posiciones recuperadas no cuentan como pérdida para circuit breaker
+            if p.get("tipo") != "recuperada":
+                estado["perdidas_seguidas"] += 1
         ps    = estado["perdidas_seguidas"]
         ops_t = estado["ops_total"]
         ops_g = estado["ops_ganadas"]
