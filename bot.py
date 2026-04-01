@@ -1463,6 +1463,26 @@ def _sincronizar_con_kucoin():
                         tp = sp; tp_oid = oid
             except Exception:
                 pass
+            # Verificar si precio actual ya rompió SL — cerrar y no monitorear
+            pc_actual = precio(simbolo)
+            if pc_actual and sl:
+                sl_roto = (dir_ == "LONG" and pc_actual <= sl) or (dir_ == "SHORT" and pc_actual >= sl)
+                if sl_roto:
+                    log.warning(f"Sync: {simbolo} {dir_} ya superó SL (${pc_actual:.4f} vs SL ${sl:.4f}) — cerrando")
+                    tg(f"Posicion {simbolo} {dir_} recuperada ya superó SL — cerrando automaticamente")
+                    try:
+                        lado_cierre = "buy" if dir_ == "SHORT" else "sell"
+                        kc_post("/api/v1/orders", {
+                            "clientOid":  f"close_{int(time.time()*1000)}",
+                            "symbol":     simbolo,
+                            "side":       lado_cierre,
+                            "type":       "market",
+                            "size":       abs(int(qty)),
+                            "reduceOnly": True,
+                        })
+                    except Exception as e:
+                        log.error(f"Error cerrando posicion SL alcanzado: {e}")
+                    continue
             with lock:
                 estado["posiciones"].append({
                     "simbolo": simbolo, "dir": dir_, "entrada": entrada,
@@ -1471,7 +1491,7 @@ def _sincronizar_con_kucoin():
                     "g_pot": 0, "p_pot": 0, "confianza_ia": 0,
                     "tipo": "recuperada", "ts": datetime.now().isoformat(),
                 })
-                estado["ops_total"] += 1  # contar para que WR no sea 0/0
+                estado["ops_total"] += 1
             log.warning(f"Sync: POSICION RECUPERADA {simbolo} {dir_} entrada=${entrada:.4f} sl=${sl} tp=${tp}")
             tg(f"POSICION RECUPERADA: {simbolo} {dir_} @ ${entrada:.4f} | SL ${sl} | TP ${tp}")
             # Si posicion recuperada va contra la direccion del bot (LONG only) — cerrar
