@@ -904,7 +904,7 @@ def tendencia(df: pd.DataFrame, pc: float = None) -> str:
     ma20 = c[-20:].mean()
     ref  = pc if pc else c[-1]
     if ref > ma20 * 1.025: return "alcista"
-    if ref < ma20 * 0.985: return "bajista"
+    if ref < ma20 * 0.995: return "bajista"
     return "lateral"
 
 def calcular_adx(df: pd.DataFrame, periodo: int = 14) -> float:
