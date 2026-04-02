@@ -900,23 +900,112 @@ def guardar_memoria_trade(p: dict, pc: float, resultado: str, pnl: float):
             t_btc = estado.get("tendencia_btc", "desconocida")
         memoria.append({
             "fecha":         datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "hora":          datetime.now().hour,
             "simbolo":       p["simbolo"],
             "tipo":          p.get("tipo", "regular"),
             "direccion":     p["dir"],
+            "tendencia":     p.get("tendencia", ""),
             "entrada":       round(p["entrada"], 6),
             "salida":        round(pc, 6),
+            "rsi":           round(p.get("rsi_entrada", 0), 1),
+            "adx":           round(p.get("adx_entrada", 0), 1),
+            "ema21":         round(p.get("ema21_entrada", 0), 6),
+            "ema89":         round(p.get("ema89_entrada", 0), 6),
+            "atr":           round(p.get("atr_entrada", 0), 6),
             "tendencia_btc": t_btc,
             "confianza_ia":  p.get("confianza_ia", 0),
             "resultado":     resultado,
             "pnl_usdt":      round(pnl, 2),
-            "leccion":       f"{'GANO' if pnl > 0 else 'PERDIO'} {abs(pnl):.2f} USDT en {resultado}",
+            "leccion":       f"{'GANO' if pnl > 0 else 'PERDIO'} {abs(pnl):.2f} USDT | RSI={p.get('rsi_entrada',0):.0f} ADX={p.get('adx_entrada',0):.0f} tendencia={p.get('tendencia','')}",
         })
-        # Guardar solo los ultimos 200 trades
-        memoria = memoria[-200:]
+        # Guardar solo los ultimos 500 trades
+        memoria = memoria[-500:]
         with open(path, "w") as f:
             json.dump(memoria, f, indent=2)
     except Exception as e:
         log.error(f"Memoria trades: {e}")
+
+
+def analizar_aprendizaje() -> dict:
+    """Analiza patrones en memoria_trades para detectar que condiciones ganan/pierden."""
+    try:
+        path = "memoria_trades.json"
+        if not os.path.exists(path):
+            return {"trades": 0, "mensaje": "Sin datos aun"}
+        with open(path, "r") as f:
+            todos = json.load(f)
+        # Solo trades regulares (no redespliegues)
+        memoria = [t for t in todos if t.get("tipo", "regular") == "regular"]
+        if len(memoria) < 5:
+            return {"trades": len(memoria), "mensaje": f"Acumulando datos ({len(memoria)}/5 minimo)"}
+
+        def wr(trades):
+            if not trades: return 0
+            return round(sum(1 for t in trades if t["pnl_usdt"] > 0) / len(trades) * 100, 1)
+
+        def pnl_total(trades):
+            return round(sum(t["pnl_usdt"] for t in trades), 2)
+
+        stats = {
+            "trades":          len(memoria),
+            "win_rate_global": wr(memoria),
+            "pnl_total":       pnl_total(memoria),
+        }
+
+        # Por par
+        pares = {}
+        for t in memoria:
+            pares.setdefault(t["simbolo"], []).append(t)
+        stats["por_par"] = {s: {"trades": len(v), "win_rate": wr(v), "pnl": pnl_total(v)} for s, v in pares.items()}
+
+        # Por rango RSI
+        def rsi_rango(v):
+            if v < 40:  return "30-40"
+            if v < 50:  return "40-50"
+            if v < 60:  return "50-60"
+            return "60-75"
+        rsi_g = {}
+        for t in memoria:
+            rsi_g.setdefault(rsi_rango(t.get("rsi", 50)), []).append(t)
+        stats["por_rsi"] = {r: {"trades": len(v), "win_rate": wr(v)} for r, v in rsi_g.items()}
+
+        # Por rango ADX
+        def adx_rango(v):
+            if v < 20: return "<20 (debil)"
+            if v < 30: return "20-30"
+            return "30+ (fuerte)"
+        adx_g = {}
+        for t in memoria:
+            adx_g.setdefault(adx_rango(t.get("adx", 20)), []).append(t)
+        stats["por_adx"] = {a: {"trades": len(v), "win_rate": wr(v)} for a, v in adx_g.items()}
+
+        # Por tendencia diaria
+        tend_g = {}
+        for t in memoria:
+            tend_g.setdefault(t.get("tendencia", "?"), []).append(t)
+        stats["por_tendencia"] = {td: {"trades": len(v), "win_rate": wr(v), "pnl": pnl_total(v)} for td, v in tend_g.items()}
+
+        # Por sesion horaria
+        def sesion(h):
+            if  6 <= h < 12: return "manana (6-12)"
+            if 12 <= h < 18: return "tarde (12-18)"
+            if 18 <= h < 24: return "noche (18-24)"
+            return "madrugada (0-6)"
+        hora_g = {}
+        for t in memoria:
+            hora_g.setdefault(sesion(t.get("hora", 12)), []).append(t)
+        stats["por_hora"] = {h: {"trades": len(v), "win_rate": wr(v)} for h, v in hora_g.items()}
+
+        # Mejor y peor trade
+        mejor = max(memoria, key=lambda x: x["pnl_usdt"])
+        peor  = min(memoria, key=lambda x: x["pnl_usdt"])
+        stats["mejor_trade"] = {"simbolo": mejor["simbolo"], "pnl": mejor["pnl_usdt"], "rsi": mejor.get("rsi"), "adx": mejor.get("adx"), "tendencia": mejor.get("tendencia")}
+        stats["peor_trade"]  = {"simbolo": peor["simbolo"],  "pnl": peor["pnl_usdt"],  "rsi": peor.get("rsi"),  "adx": peor.get("adx"),  "tendencia": peor.get("tendencia")}
+
+        return stats
+    except Exception as e:
+        log.error(f"analizar_aprendizaje: {e}")
+        return {"error": str(e)}
 
 
 def leer_memoria_trades(simbolo: str, n: int = 5) -> str:
@@ -1141,7 +1230,7 @@ RAZON: una linea breve"""}]
 
 # ─── POSICIONES ───────────────────────────────────────────────────────────────
 
-def abrir(simbolo, t, pc, ia):
+def abrir(simbolo, t, pc, ia, rsi=0, adx=0, ema21=0, ema89=0, atr=0):
     lev    = estado["apalancamiento"]
     lado   = "buy" if t == "alcista" else "sell"
     dir_   = "LONG" if lado == "buy" else "SHORT"
@@ -1219,15 +1308,23 @@ def abrir(simbolo, t, pc, ia):
             "margen":       margen,
             "g_pot":        round(g_pot, 2),
             "p_pot":        round(p_pot, 2),
-            "confianza_ia": ia["confianza"],
-            "tipo":         "regular",
-            "ts":           datetime.now().isoformat(),
+            "confianza_ia":  ia["confianza"],
+            "tipo":          "regular",
+            "ts":            datetime.now().isoformat(),
+            "rsi_entrada":   round(rsi, 1),
+            "adx_entrada":   round(adx, 1),
+            "ema21_entrada": round(ema21, 6),
+            "ema89_entrada": round(ema89, 6),
+            "atr_entrada":   round(atr, 6),
+            "tendencia":     t,
+            "hora":          datetime.now().hour,
         })
         estado["ops_total"] += 1
 
     tg(f"ENTRADA {simbolo} {dir_} @ ${pc:.4f}\n"
        f"IA {ia['confianza']}% | Riesgo: ${p_pot:.2f} USDT\n"
        f"SL: ${sl:.4f} | TP1: ${tp1:.4f} (50%) | TP2: ${tp2:.4f} (50%)\n"
+       f"RSI={rsi:.0f} ADX={adx:.0f}\n"
        f"Razon: {ia['razon']}")
 
 def _cerrar_posicion(p: dict, pc: float):
@@ -1638,7 +1735,7 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         return
 
     log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
-    abrir(simbolo, t, pc, ia)
+    abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v, atr=atr)
 
 
 def analizar(simbolo: str):
@@ -1987,6 +2084,11 @@ def api_historial():
     except Exception as e:
         log.error(f"Historial API: {e}")
     return jsonify([])
+
+@app.route("/api/aprendizaje")
+def api_aprendizaje():
+    """Retorna estadisticas de aprendizaje del bot basadas en memoria de trades."""
+    return jsonify(analizar_aprendizaje())
 
 @app.route("/api/test_orden")
 def api_test_orden():
