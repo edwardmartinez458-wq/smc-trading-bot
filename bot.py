@@ -32,6 +32,7 @@ KC_PASSPHRASE  = os.getenv("KUCOIN_PASSPHRASE")
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 DEEPSEEK_API_KEY  = os.getenv("DEEPSEEK_API_KEY")
+COINGLASS_API_KEY = os.getenv("COINGLASS_API_KEY", "")
 
 # Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
@@ -1141,6 +1142,79 @@ def confirma_1h(df: pd.DataFrame, t: str) -> bool:
         return velas_ok and c[-1] < ema21
     return False
 
+# ─── COINGLASS — ZONAS DE LIQUIDEZ SMC ───────────────────────────────────────
+
+# Mapeo de simbolos al formato CoinGlass
+CG_SYMBOL_MAP = {
+    "SOLUSDTM":  "SOL",  "SOL-USDT":  "SOL",
+    "XRPUSDTM":  "XRP",  "XRP-USDT":  "XRP",
+    "AVAXUSDTM": "AVAX", "AVAX-USDT": "AVAX",
+    "DOTUSDTM":  "DOT",  "DOT-USDT":  "DOT",
+    "BTCUSDTM":  "BTC",  "BTC-USDT":  "BTC",
+}
+
+def obtener_liquidaciones_coinglass(simbolo: str, pc: float) -> str:
+    """Consulta CoinGlass para detectar zonas de liquidez/liquidaciones cercanas.
+    Retorna un string con contexto para la IA sobre donde hay clusters de stops."""
+    if not COINGLASS_API_KEY:
+        return ""
+    try:
+        cg_sym = CG_SYMBOL_MAP.get(simbolo, simbolo.replace("USDTM", "").replace("-USDT", ""))
+        url = f"https://open-api-v3.coinglass.com/api/futures/liquidation/map?symbol={cg_sym}&timeType=all"
+        r = requests.get(url, headers={"CG-API-KEY": COINGLASS_API_KEY}, timeout=5)
+        if r.status_code != 200:
+            return ""
+        data = r.json().get("data", {})
+        longs_map  = data.get("longLiquidationMap",  [])   # [[precio, monto_USD], ...]
+        shorts_map = data.get("shortLiquidationMap", [])
+
+        if not longs_map and not shorts_map:
+            return ""
+
+        # Buscar clusters en rango ±8% del precio actual
+        rango_bajo = pc * 0.92
+        rango_alto = pc * 1.08
+
+        def filtrar_y_agrupar(mapa, rango_b, rango_a):
+            """Filtra niveles dentro del rango y devuelve los 3 mas grandes."""
+            niveles = [(float(p), float(m)) for p, m in mapa
+                       if rango_b <= float(p) <= rango_a]
+            niveles.sort(key=lambda x: x[1], reverse=True)
+            return niveles[:3]
+
+        longs_cercanos  = filtrar_y_agrupar(longs_map,  rango_bajo, rango_alto)
+        shorts_cercanos = filtrar_y_agrupar(shorts_map, rango_bajo, rango_alto)
+
+        lineas = ["ZONAS DE LIQUIDEZ (CoinGlass ±8%):"]
+
+        if longs_cercanos:
+            for precio_niv, monto in longs_cercanos:
+                distancia = ((precio_niv - pc) / pc) * 100
+                lado_txt  = f"{'arriba' if precio_niv > pc else 'abajo'} {abs(distancia):.1f}%"
+                lineas.append(f"  Liquidaciones LONG ${monto/1e6:.1f}M @ ${precio_niv:.4f} ({lado_txt})")
+
+        if shorts_cercanos:
+            for precio_niv, monto in shorts_cercanos:
+                distancia = ((precio_niv - pc) / pc) * 100
+                lado_txt  = f"{'arriba' if precio_niv > pc else 'abajo'} {abs(distancia):.1f}%"
+                lineas.append(f"  Liquidaciones SHORT ${monto/1e6:.1f}M @ ${precio_niv:.4f} ({lado_txt})")
+
+        # Resumen SMC: donde hay mas liquidez segun direccion
+        total_longs  = sum(m for _, m in longs_cercanos)
+        total_shorts = sum(m for _, m in shorts_cercanos)
+        if total_longs > total_shorts * 1.5:
+            lineas.append("  SMC: mayor pool de liquidez en LONGs → precio puede ir a cazar stops de longs")
+        elif total_shorts > total_longs * 1.5:
+            lineas.append("  SMC: mayor pool de liquidez en SHORTs → precio puede ir a cazar stops de shorts")
+        else:
+            lineas.append("  SMC: liquidez balanceada en ambos lados")
+
+        return "\n".join(lineas)
+    except Exception as e:
+        log.debug(f"CoinGlass: {e}")
+        return ""
+
+
 # ─── FILTRO IA ────────────────────────────────────────────────────────────────
 
 def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
@@ -1178,6 +1252,7 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
     funding           = obtener_funding_rate(simbolo)
     rsi_actual        = calcular_rsi(velas(simbolo, "240", 30) if True else pd.DataFrame())
     sesion            = sesion_activa()
+    liquidez_cg       = obtener_liquidaciones_coinglass(simbolo, pc)
 
     for intento in range(3):
         try:
@@ -1195,6 +1270,7 @@ Sesion activa: {sesion} | RSI 4H: {rsi_actual}
 {fear_greed}
 {funding}
 {trump_contexto}{fed_contexto}{liq_contexto}{ballena_contexto}
+{liquidez_cg}
 {memoria_contexto}
 
 ANALIZA:
@@ -1203,7 +1279,8 @@ ANALIZA:
 3. La tendencia BTC apoya la entrada?
 4. El RSI indica sobrecompra/sobreventa extrema que contradiga la entrada?
 5. Las alertas activas (Trump/Fed/Liquidaciones/Ballenas) apoyan o contradicen la entrada?
-6. El historial de trades previos apoya o desaconseja esta entrada?
+6. Las zonas de liquidez CoinGlass confirman la direccion? (SMC: entrar cuando hay liquidez en la direccion del trade)
+7. El historial de trades previos apoya o desaconseja esta entrada?
 
 RESPONDE EXACTAMENTE (sin texto extra):
 DECISION: ENTRAR o NO_ENTRAR
