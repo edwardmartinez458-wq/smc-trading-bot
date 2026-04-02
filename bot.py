@@ -33,7 +33,6 @@ TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 DEEPSEEK_API_KEY  = os.getenv("DEEPSEEK_API_KEY")
 COINGLASS_API_KEY  = os.getenv("COINGLASS_API_KEY", "")
-CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY", "")
 
 # Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
@@ -1216,42 +1215,48 @@ def obtener_liquidaciones_coinglass(simbolo: str, pc: float) -> str:
         return ""
 
 
-# ─── CRYPTOPANIC — Noticias con sentimiento ───────────────────────────────────
-CP_SYMBOL_MAP = {
+# ─── NOTICIAS — RSS gratuito (CoinDesk + CoinTelegraph) ──────────────────────
+NEWS_SYMBOL_MAP = {
     "SOLUSDTM": "SOL", "XRPUSDTM": "XRP", "AVAXUSDTM": "AVAX", "DOTUSDTM": "DOT",
     "SOL-USDT": "SOL", "XRP-USDT": "XRP", "AVAX-USDT": "AVAX", "DOT-USDT": "DOT",
     "BTCUSDTM": "BTC", "ETHUSDTM": "ETH",
 }
 
-def obtener_noticias_cryptopanic(simbolo: str) -> str:
-    """Consulta CryptoPanic para obtener noticias recientes con sentimiento."""
-    if not CRYPTOPANIC_API_KEY:
-        return ""
+def obtener_noticias_rss(simbolo: str) -> str:
+    """Obtiene noticias recientes via RSS gratuito — sin API key, sin cuenta."""
+    import xml.etree.ElementTree as ET
+    moneda   = NEWS_SYMBOL_MAP.get(simbolo, simbolo.replace("USDTM","").replace("-USDT",""))
+    terminos = [moneda.lower(), "bitcoin", "btc", "crypto"]
+    titulos  = []
+    fuentes  = [
+        "https://www.coindesk.com/arc/outboundfeeds/rss/",
+        "https://cointelegraph.com/rss",
+    ]
     try:
-        moneda = CP_SYMBOL_MAP.get(simbolo, simbolo.replace("USDTM","").replace("-USDT",""))
-        url = f"https://cryptopanic.com/api/free/v1/posts/?auth_token={CRYPTOPANIC_API_KEY}&currencies={moneda},BTC&filter=hot&public=true"
-        r = requests.get(url, timeout=6)
-        if r.status_code != 200:
+        for fuente in fuentes:
+            try:
+                r = requests.get(fuente, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code != 200:
+                    continue
+                root = ET.fromstring(r.content)
+                for item in root.iter("item"):
+                    titulo = (item.findtext("title") or "").strip()
+                    if any(t in titulo.lower() for t in terminos):
+                        titulos.append(titulo[:90])
+                    if len(titulos) >= 5:
+                        break
+            except Exception:
+                continue
+            if len(titulos) >= 3:
+                break
+        if not titulos:
             return ""
-        resultados = r.json().get("results", [])[:5]
-        if not resultados:
-            return ""
-        bulls, bears, titulos = 0, 0, []
-        for n in resultados:
-            votos = n.get("votes", {})
-            bulls += votos.get("positive", 0)
-            bears += votos.get("negative", 0)
-            titulos.append(n.get("title", "")[:80])
-        total = bulls + bears
-        if total == 0:
-            return ""
-        sentimiento = "ALCISTA" if bulls > bears * 1.3 else "BAJISTA" if bears > bulls * 1.3 else "NEUTRAL"
-        lineas = [f"NOTICIAS CRYPTOPANIC ({moneda}+BTC) — Sentimiento: {sentimiento} ({bulls}👍 {bears}👎):"]
+        lineas = [f"NOTICIAS RECIENTES ({moneda}+BTC):"]
         for t_n in titulos:
             lineas.append(f"  • {t_n}")
         return "\n".join(lineas)
     except Exception as e:
-        log.debug(f"CryptoPanic: {e}")
+        log.debug(f"Noticias RSS: {e}")
         return ""
 
 # ─── FILTRO IA ────────────────────────────────────────────────────────────────
@@ -1292,7 +1297,7 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
     rsi_actual        = calcular_rsi(velas(simbolo, "240", 30) if True else pd.DataFrame())
     sesion            = sesion_activa()
     liquidez_cg       = obtener_liquidaciones_coinglass(simbolo, pc)
-    noticias_cp       = obtener_noticias_cryptopanic(simbolo)
+    noticias_cp       = obtener_noticias_rss(simbolo)
 
     for intento in range(3):
         try:
