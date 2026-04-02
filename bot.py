@@ -1670,23 +1670,6 @@ def _sincronizar_con_kucoin():
                 estado["ops_total"] += 1
             log.warning(f"Sync: POSICION RECUPERADA {simbolo} {dir_} entrada=${entrada:.4f} sl=${sl} tp=${tp}")
             tg(f"POSICION RECUPERADA: {simbolo} {dir_} @ ${entrada:.4f} | SL ${sl} | TP ${tp}")
-            # Si posicion recuperada va contra la direccion del bot (LONG only) — cerrar
-            if dir_ == "SHORT":
-                log.warning(f"Posicion recuperada SHORT en bot LONG — cerrando {simbolo}")
-                tg(f"Posicion SHORT recuperada en {simbolo} va contra bot LONG — cerrando automaticamente")
-                # Cerrar inmediatamente via orden de mercado
-                try:
-                    kc_post("/api/v1/orders", {
-                        "clientOid":  f"close_{int(time.time()*1000)}",
-                        "symbol":     simbolo,
-                        "side":       "buy",
-                        "type":       "market",
-                        "size":       abs(int(qty)),
-                        "reduceOnly": True,
-                    })
-                except Exception as e:
-                    log.error(f"Error cerrando posicion recuperada SHORT: {e}")
-                continue
 
     except Exception as e:
         log.error(f"Sincronizacion KuCoin: {e}")
@@ -1980,6 +1963,26 @@ def verificar_inicio():
                 margen = abs(float(pk.get("posMargin", 0)))
                 ya_existe = any(p["simbolo"] == simbolo for p in estado["posiciones"])
                 if not ya_existe:
+                    # Verificar si precio actual ya rompió SL — cerrar y no monitorear
+                    pc_actual = precio(simbolo)
+                    if pc_actual and sl:
+                        sl_roto = (dir_ == "LONG" and pc_actual <= sl) or (dir_ == "SHORT" and pc_actual >= sl)
+                        if sl_roto:
+                            lado_cierre = "sell" if dir_ == "LONG" else "buy"
+                            log.warning(f"Inicio: {simbolo} {dir_} ya superó SL (${pc_actual:.4f} vs SL ${sl:.4f}) — cerrando")
+                            tg(f"Posicion {simbolo} {dir_} recuperada ya superó SL — cerrando automaticamente")
+                            try:
+                                kc_post("/api/v1/orders", {
+                                    "clientOid":  f"close_{int(time.time()*1000)}",
+                                    "symbol":     simbolo,
+                                    "side":       lado_cierre,
+                                    "type":       "market",
+                                    "size":       abs(int(qty)),
+                                    "reduceOnly": True,
+                                })
+                            except Exception as e:
+                                log.error(f"Error cerrando posicion recuperada: {e}")
+                            continue
                     # Buscar ordenes activas de SL/TP en KuCoin para este simbolo
                     sl_oid_, tp_oid_ = None, None
                     try:
