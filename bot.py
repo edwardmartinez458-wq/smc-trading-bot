@@ -1833,6 +1833,24 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         log.info(f"{simbolo} — RECHAZADO: 15min no confirma (2/3 velas) direccion {t}")
         return
 
+    # Filtro rebote de mercado — revisar RSI 1H de los 4 pares
+    # SHORT: si cualquier par tiene RSI > 80 el mercado rebota fuerte → no entrar
+    # LONG:  si cualquier par tiene RSI < 20 el mercado se desploma fuerte → no entrar
+    for par_check in PARES:
+        if par_check == simbolo:
+            continue
+        try:
+            df_check  = velas(par_check, "60", 30)
+            rsi_check = calcular_rsi(df_check)
+            if t == "bajista" and rsi_check > 80:
+                log.info(f"{simbolo} — RECHAZADO: rebote mercado ({par_check} RSI 1H={rsi_check:.1f} > 80)")
+                return
+            if t == "alcista" and rsi_check < 35:
+                log.info(f"{simbolo} — RECHAZADO: caida mercado ({par_check} RSI 1H={rsi_check:.1f} < 20)")
+                return
+        except Exception:
+            pass
+
     log.info(f"{simbolo} — EMA 4H + RSI/ADX 1H + 15min OK — consultando IA...")
     ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
     ia = filtro_ia(simbolo, t, pc, ob_ctx, 0)
