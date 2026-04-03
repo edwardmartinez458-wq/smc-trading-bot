@@ -1375,11 +1375,11 @@ def abrir(simbolo, t, pc, ia, rsi=0, adx=0, ema21=0, ema89=0, atr=0):
     # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 50)
     if confianza >= 76:
-        capital_pct = 1.00  # 100% — confianza alta
+        capital_pct = 0.60  # 60% — confianza alta
     elif confianza >= 62:
-        capital_pct = 0.70  # 70% — confianza media
+        capital_pct = 0.45  # 45% — confianza media
     else:
-        capital_pct = 0.40  # 40% — confianza baja
+        capital_pct = 0.30  # 30% — confianza baja
     riesgo_usdt = estado["capital"] * capital_pct * sl_pct
     log.info(f"{simbolo} — confianza {confianza}% → capital {capital_pct*100:.0f}% | riesgo max ${riesgo_usdt:.2f}")
     g_pot = riesgo_usdt * (tp2_dist / sl_dist)
@@ -2087,7 +2087,7 @@ def verificar_inicio():
     tg(f"SMC BOT v13 INICIADO\n\n"
        f"Pares: {len(pares_ok)} | Capital: ${estado['capital']:.2f} USDT\n"
        f"x{estado['apalancamiento']} | TP: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}%\n"
-       f"Capital dinamico: 40/70/100% segun confianza IA\n"
+       f"Capital dinamico: 30/45/60% segun confianza IA\n"
        f"Trailing stop: activa desde +15%\n"
        f"SL diario: {SL_DIARIO_PCT*100:.0f}% | Max posiciones: {MAX_POSICIONES}\n"
        f"Ciclo: 5-15 min | Horario: 24/7\n\n"
