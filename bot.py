@@ -1880,6 +1880,13 @@ def analizar(simbolo: str):
         log.info(f"{simbolo} — RECHAZADO: mercado lateral, sin operacion")
         return
 
+    # Si SHORT, verificar que BTC no sea alcista (evita loop abrir/cerrar)
+    if t == "bajista":
+        t_btc = estado.get("tendencia_btc", "lateral")
+        if t_btc == "alcista":
+            log.info(f"{simbolo} — RECHAZADO: estructura bajista pero BTC es alcista, no abrir SHORT")
+            return
+
     # Opera LONG en alcista y SHORT en bajista
     _trade_ema_rsi(simbolo, t, pc, df_4h)
 
