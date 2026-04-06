@@ -1662,6 +1662,8 @@ def _sincronizar_con_kucoin():
                 log.info(f"Sync: ignorando {simbolo} — cerrada recientemente por el bot (esperando ejecucion en KuCoin)")
                 continue
             qty     = float(pk.get("currentQty", 0))
+            if qty == 0:
+                continue  # posicion cerrada, ignorar
             dir_    = "LONG" if qty > 0 else "SHORT"
             # Bot bidireccional: monitorea LONG y SHORT
             entrada = float(pk.get("avgEntryPrice", 0))
