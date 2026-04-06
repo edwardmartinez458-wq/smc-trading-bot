@@ -38,7 +38,7 @@ COINGLASS_API_KEY  = os.getenv("COINGLASS_API_KEY", "")
 PARES = [
     "INJUSDTM",
     "XRPUSDTM",
-    "AVAXUSDTM",
+    "SUIUSDTM",
     "DOTUSDTM",
 ]
 
