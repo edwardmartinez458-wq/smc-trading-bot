@@ -199,7 +199,7 @@ def actualizar_tendencia_btc():
                     estado["tendencia_btc"] = t
         except Exception as e:
             log.error(f"Tendencia BTC: {e}")
-        time.sleep(30 * 60)
+        time.sleep(10 * 60)
 
 # ─── TELEGRAM ────────────────────────────────────────────────────────────────
 
