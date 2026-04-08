@@ -295,6 +295,7 @@ def manejar_comando(texto: str):
 
 def obtener_posts_trump() -> list:
     urls = [
+        "https://www.trumpstruth.org/feed",
         "https://truthsocial.com/@realDonaldTrump.rss",
         "https://rss.app/feeds/trump-truth-social.xml",
     ]
