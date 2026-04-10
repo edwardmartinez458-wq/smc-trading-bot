@@ -1556,10 +1556,10 @@ def _cerrar_posicion(p: dict, pc: float):
 
         # Cancelar orden TP en KuCoin si cerramos por SL o tendencia
         if not tp_ok and p.get("tp_oid"):
-            kc_delete(f"/api/v1/orders/{p['tp_oid']}")
+            kc_delete(f"/api/v1/stopOrders/{p['tp_oid']}")
         # Cancelar orden SL en KuCoin si cerramos por TP
         if tp_ok and p.get("sl_oid"):
-            kc_delete(f"/api/v1/orders/{p['sl_oid']}")
+            kc_delete(f"/api/v1/stopOrders/{p['sl_oid']}")
 
         # PnL real siempre desde precio de cierre (robusto para todos los tipos)
         margen = p.get("margen", estado["capital"] * p.get("capital_pct", 0.5))
@@ -2300,7 +2300,7 @@ def api_cerrar_manual():
     for oid_key in ("sl_oid", "tp_oid"):
         oid = p.get(oid_key)
         if oid:
-            kc_delete(f"/api/v1/orders/{oid}")
+            kc_delete(f"/api/v1/stopOrders/{oid}")
     # Orden de mercado para cerrar
     r = kc_post("/api/v1/orders", {
         "clientOid":  f"close_{int(time.time()*1000)}",
