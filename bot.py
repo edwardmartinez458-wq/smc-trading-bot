@@ -1873,6 +1873,15 @@ def analizar(simbolo: str):
         if any(p["simbolo"] == simbolo for p in estado["posiciones"]):
             log.info(f"{simbolo} — bloqueado: ya tiene posicion abierta")
             return
+        # Verificar directamente en KuCoin por si el startup sync fallo
+        try:
+            pos_kc = kc_get("/api/v1/position", {"symbol": simbolo})
+            qty_kc = float((pos_kc.get("data") or {}).get("currentQty", 0))
+            if qty_kc != 0:
+                log.warning(f"{simbolo} — bloqueado: posicion activa en KuCoin ({qty_kc} contratos) no registrada en estado — omitiendo entrada")
+                return
+        except Exception as e:
+            log.warning(f"{simbolo} — error verificando posicion en KuCoin: {e}")
 
     if not en_horario_operacion():
         log.info(f"{simbolo} — fuera de horario ({hora_venezuela()}h Venezuela)")
