@@ -801,6 +801,16 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float,
     sl_oid   = f"sl_{int(time.time()*1000)}"
     tp_oid   = f"tp_{int(time.time()*1000)+1}"
 
+    # Cancelar todas las stop orders huerfanas del simbolo antes de colocar las nuevas
+    try:
+        ords_prev = kc_get("/api/v1/stopOrders", {"symbol": simbolo, "status": "active"})
+        for o in (ords_prev.get("data", {}).get("items") or []):
+            oid_prev = o.get("clientOid", o.get("id", ""))
+            kc_delete(f"/api/v1/stopOrders/{oid_prev}")
+            log.info(f"{simbolo} — orden huerfana cancelada antes de nueva entrada: {oid_prev}")
+    except Exception as e:
+        log.warning(f"{simbolo} — error cancelando ordenes previas: {e}")
+
     kc_post("/api/v1/orders", {
         "clientOid":     sl_oid,
         "symbol":        simbolo,
