@@ -96,22 +96,22 @@
     backdrop-filter: blur(16px);
     border-bottom: 1px solid var(--border);
     padding: 0 1.5rem;
-    height: 40px;
-    display: flex; align-items: center; gap: 1.6rem;
-    font-family: var(--mono); font-size: 0.62rem;
+    height: 52px;
+    display: flex; align-items: center; gap: 2rem;
+    font-family: var(--mono); font-size: 0.75rem;
     overflow-x: auto; overflow-y: hidden;
   }
   .market-bar::-webkit-scrollbar { display: none; }
 
-  .mkt-item { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
-  .mkt-label { color: var(--muted); font-size: 0.54rem; letter-spacing: 0.08em; text-transform: uppercase; }
-  .mkt-val   { color: var(--text); font-weight: 600; }
-  .mkt-change { font-size: 0.6rem; font-weight: 600; }
+  .mkt-item { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .mkt-label { color: var(--muted); font-size: 0.6rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .mkt-val   { color: var(--text); font-weight: 700; font-size: 0.82rem; }
+  .mkt-change { font-size: 0.72rem; font-weight: 700; }
   .mkt-change.up { color: var(--green); }
   .mkt-change.dn { color: var(--red); }
-  .mkt-sep { width: 1px; height: 18px; background: var(--border); flex-shrink: 0; }
+  .mkt-sep { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
 
-  .fg-val { font-weight: 700; }
+  .fg-val { font-weight: 700; font-size: 0.88rem; }
   .fg-extreme-fear  { color: #ff4d6d; }
   .fg-fear          { color: #ff8c42; }
   .fg-neutral       { color: var(--warn); }
@@ -119,10 +119,10 @@
   .fg-extreme-greed { color: var(--green); }
 
   /* Meta progress bar in market bar */
-  .mkt-meta { display: flex; align-items: center; gap: 8px; }
-  .mkt-meta-bar  { width: 90px; height: 5px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+  .mkt-meta { display: flex; align-items: center; gap: 10px; }
+  .mkt-meta-bar  { width: 110px; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
   .mkt-meta-fill { height: 100%; background: linear-gradient(90deg, var(--kc), var(--bx)); border-radius: 3px; transition: width 0.8s ease; }
-  .mkt-meta-pct  { color: var(--sub); font-size: 0.58rem; }
+  .mkt-meta-pct  { color: var(--sub); font-size: 0.7rem; font-weight: 600; }
 
   /* ── MAIN ───────────────────────────────────────────── */
   main { max-width: 1700px; margin: 0 auto; padding: 1.25rem; }
@@ -356,7 +356,7 @@
   <div class="mkt-item">
     <span class="mkt-label">Miedo/Codicia</span>
     <span class="mkt-val fg-val" id="fg-num">—</span>
-    <span id="fg-label" style="font-size:0.57rem;color:var(--sub)">—</span>
+    <span id="fg-label" style="font-size:0.68rem;color:var(--sub);font-weight:500">—</span>
   </div>
   <div class="mkt-sep"></div>
   <!-- Capital total -->
