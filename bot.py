@@ -1873,6 +1873,12 @@ def analizar(simbolo: str):
         if any(p["simbolo"] == simbolo for p in estado["posiciones"]):
             log.info(f"{simbolo} — bloqueado: ya tiene posicion abierta")
             return
+        if simbolo in _cerradas_reciente:
+            transcurrido = time.time() - _cerradas_reciente[simbolo]
+            if transcurrido < 1800:  # 30 minutos de cooldown
+                restante = int(1800 - transcurrido)
+                log.info(f"{simbolo} — bloqueado: cooldown 30min tras cierre ({restante}s restantes)")
+                return
         # Verificar directamente en KuCoin por si el startup sync fallo
         try:
             pos_kc = kc_get("/api/v1/position", {"symbol": simbolo})
@@ -2329,9 +2335,10 @@ def api_cerrar_manual():
         "size":       p.get("cantidad", 1),
         "reduceOnly": True,
     })
-    # Remover posicion del estado interno inmediatamente
+    # Remover posicion y aplicar cooldown de 30 min para evitar re-entrada inmediata
     with lock:
         estado["posiciones"] = [x for x in estado["posiciones"] if x["simbolo"] != simbolo]
+        _cerradas_reciente[simbolo] = time.time()  # cooldown 30 min aplicado en analizar()
     pnl_estimado = round((p["entrada"] - pc) * p.get("cantidad",1) * obtener_multiplicador(simbolo), 2) if p["dir"] == "SHORT" else round((pc - p["entrada"]) * p.get("cantidad",1) * obtener_multiplicador(simbolo), 2)
     resultado = "ganado" if pnl_estimado > 0 else "perdido"
     guardar_historial(simbolo, p["dir"], p["entrada"], pc, pnl_estimado, resultado, p.get("confianza_ia", 0))
