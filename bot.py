@@ -40,6 +40,7 @@ PARES = [
     "XRPUSDTM",
     "SUIUSDTM",
     "DOTUSDTM",
+    "APTUSDTM",
 ]
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
