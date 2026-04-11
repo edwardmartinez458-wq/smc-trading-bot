@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMC Bots — Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #080d18;
+    --card:     #101827;
+    --card2:    #0e1622;
+    --border:   rgba(255,255,255,0.07);
+    --border2:  rgba(255,255,255,0.04);
+    --green:    #34d399;
+    --green-bg: rgba(52,211,153,0.08);
+    --red:      #fb7185;
+    --red-bg:   rgba(251,113,133,0.08);
+    --warn:     #fbbf24;
+    --warn-bg:  rgba(251,191,36,0.08);
+    --blue:     #60a5fa;
+    --blue-bg:  rgba(96,165,250,0.08);
+    --text:     #e2e8f0;
+    --sub:      #94a3b8;
+    --muted:    #475569;
+    --mono:     'JetBrains Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* ── HEADER ───────────────────────────────────── */
+  header {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(8,13,24,0.92);
+    backdrop-filter: blur(24px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 1.5rem;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 58px;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 0.8rem; font-weight: 700;
+    letter-spacing: 0.12em; color: var(--text);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .header-right { display: flex; align-items: center; gap: 1.25rem; }
+  .header-bot-status {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-family: var(--mono); font-size: 0.62rem;
+  }
+  .header-bot-label { color: var(--sub); letter-spacing: 0.06em; }
+
+  .pulse-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%; flex-shrink: 0;
+    animation: blink 2.4s ease-in-out infinite;
+  }
+  .pulse-dot.green { background: var(--green); box-shadow: 0 0 0 0 rgba(52,211,153,0.4); }
+  .pulse-dot.red   { background: var(--red);   box-shadow: 0 0 0 0 rgba(251,113,133,0.4); }
+  @keyframes blink {
+    0%,100% { opacity:1; }
+    50%      { opacity:0.45; }
+  }
+
+  .badge {
+    font-family: var(--mono);
+    font-size: 0.58rem; font-weight: 700;
+    padding: 3px 10px; border-radius: 999px;
+    letter-spacing: 0.08em;
+  }
+  .badge.long-online  { background: var(--green-bg); border: 1px solid rgba(52,211,153,0.3); color: var(--green); }
+  .badge.short-online { background: var(--red-bg);   border: 1px solid rgba(251,113,133,0.3); color: var(--red); }
+  .badge.offline      { background: rgba(71,85,105,0.2); border: 1px solid rgba(71,85,105,0.4); color: var(--muted); }
+
+  #last-update { font-family: var(--mono); font-size: 0.6rem; color: var(--muted); }
+
+  /* ── MAIN ─────────────────────────────────────── */
+  main { max-width: 1600px; margin: 0 auto; padding: 1.25rem; }
+
+  /* ── TWO-BOT SPLIT ────────────────────────────── */
+  .bots-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+  @media(max-width: 960px) { .bots-split { grid-template-columns: 1fr; } }
+
+  .bot-panel { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  /* ── BOT HEADER ───────────────────────────────── */
+  .bot-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    flex-wrap: wrap; gap: 0.75rem;
+  }
+  .bot-header.long-header  { border-left: 3px solid var(--green); }
+  .bot-header.short-header { border-left: 3px solid var(--red); }
+
+  .bot-name {
+    font-size: 0.9rem; font-weight: 700; letter-spacing: 0.02em;
+  }
+  .bot-name.long  { color: var(--green); }
+  .bot-name.short { color: var(--red); }
+  .bot-exchange { font-family: var(--mono); font-size: 0.58rem; color: var(--muted); margin-top: 3px; }
+
+  .controls { display: flex; gap: 0.5rem; }
+  .btn {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.7rem; font-weight: 600;
+    padding: 7px 16px; border-radius: 8px;
+    border: 1px solid; cursor: pointer;
+    transition: all 0.18s; letter-spacing: 0.02em;
+  }
+  .btn-pause  { background: transparent; border-color: rgba(251,191,36,0.4); color: var(--warn); }
+  .btn-pause:hover  { background: var(--warn-bg); border-color: var(--warn); }
+  .btn-resume { background: transparent; border-color: rgba(52,211,153,0.4); color: var(--green); }
+  .btn-resume:hover { background: var(--green-bg); border-color: var(--green); }
+  .btn-resume.red { border-color: rgba(251,113,133,0.4); color: var(--red); }
+  .btn-resume.red:hover { background: var(--red-bg); border-color: var(--red); }
+
+  /* ── STATS GRID ───────────────────────────────── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.6rem;
+  }
+
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.85rem;
+    transition: border-color 0.2s;
+  }
+  .stat:hover { border-color: rgba(255,255,255,0.12); }
+  .stat.accent-top { border-top: 2px solid var(--green); }
+  .stat.red-top    { border-top: 2px solid var(--red); }
+  .stat.blue-top   { border-top: 2px solid var(--blue); }
+
+  .stat-label {
+    font-size: 0.58rem; font-weight: 600;
+    letter-spacing: 0.08em; color: var(--muted);
+    text-transform: uppercase; margin-bottom: 0.35rem;
+  }
+  .stat-val {
+    font-family: var(--mono);
+    font-size: 1.25rem; font-weight: 700;
+    line-height: 1; color: var(--text);
+  }
+  .stat-val.green { color: var(--green); }
+  .stat-val.red   { color: var(--red); }
+  .stat-val.blue  { color: var(--blue); }
+  .stat-sub {
+    font-family: var(--mono);
+    font-size: 0.56rem; color: var(--muted); margin-top: 0.28rem;
+  }
+  .wr-bar  { height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; margin-top: 0.5rem; overflow: hidden; }
+  .wr-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.6s ease; }
+
+  /* ── CARD ─────────────────────────────────────── */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .card-header {
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-title {
+    font-size: 0.65rem; font-weight: 600;
+    letter-spacing: 0.07em; color: var(--sub);
+    text-transform: uppercase;
+  }
+  .card-badge {
+    font-family: var(--mono); font-size: 0.58rem; color: var(--muted);
+    background: rgba(255,255,255,0.04);
+    padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--border2);
+  }
+
+  /* ── POSITION CARDS ───────────────────────────── */
+  .pos-cards { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.65rem; }
+  .pos-card {
+    background: var(--card2);
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    padding: 0.85rem;
+  }
+  .pos-card.long-card  { border-left: 3px solid var(--green); }
+  .pos-card.short-card { border-left: 3px solid var(--red); }
+  .pos-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.55rem; }
+  .pos-par { font-family: var(--mono); font-size: 0.85rem; font-weight: 700; color: var(--text); }
+  .pos-side { font-size: 0.6rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+  .pos-side.long  { background: var(--green-bg); color: var(--green); }
+  .pos-side.short { background: var(--red-bg);   color: var(--red); }
+  .pos-lev { font-family: var(--mono); font-size: 0.56rem; color: var(--muted); margin-left: 4px; }
+  .pos-ia  { font-family: var(--mono); font-size: 0.58rem; color: var(--muted); }
+  .pos-pnl {
+    font-family: var(--mono); font-size: 1.25rem; font-weight: 700;
+    margin-bottom: 0.45rem;
+    display: flex; align-items: baseline; gap: 5px;
+  }
+  .pos-pnl .pct { font-size: 0.7rem; opacity: 0.75; }
+  .pos-pnl.pos { color: var(--green); }
+  .pos-pnl.neg { color: var(--red); }
+  .pos-details {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 0.2rem 0;
+    font-size: 0.62rem; color: var(--muted); margin-bottom: 0.75rem;
+  }
+  .pos-details .val { font-family: var(--mono); color: var(--text); }
+  .btn-cerrar {
+    width: 100%; font-family: 'Inter', sans-serif;
+    font-size: 0.66rem; font-weight: 600;
+    padding: 7px; border-radius: 7px;
+    border: 1px solid rgba(251,113,133,0.3);
+    color: var(--red); background: var(--red-bg);
+    cursor: pointer; transition: all 0.18s;
+  }
+  .btn-cerrar:hover { background: rgba(251,113,133,0.18); border-color: var(--red); }
+
+  .pos { color: var(--green); font-weight: 600; }
+  .neg { color: var(--red);   font-weight: 600; }
+
+  .empty { font-size: 0.7rem; color: var(--muted); text-align: center; padding: 1.75rem 1rem; font-style: italic; }
+
+  /* ── LOGS ─────────────────────────────────────── */
+  .log-list {
+    max-height: 240px; overflow-y: auto;
+    font-family: var(--mono); font-size: 0.6rem; line-height: 2;
+    padding: 0.5rem 0.75rem;
+  }
+  .log-list::-webkit-scrollbar { width: 3px; }
+  .log-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 2px; }
+  .log-row { display: flex; gap: 0.65rem; border-bottom: 1px solid rgba(255,255,255,0.025); }
+  .log-time  { color: var(--muted); flex-shrink: 0; }
+  .log-msg         { color: #90b8e0; }
+  .log-msg.warn    { color: var(--warn); }
+  .log-msg.error   { color: var(--red); }
+  .log-msg.ok      { color: var(--green); }
+
+  /* ── HISTORIAL ────────────────────────────────── */
+  .hist-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.55rem 0; border-bottom: 1px solid var(--border2);
+    font-size: 0.68rem;
+  }
+  .hist-item:last-child { border-bottom: none; }
+  .hist-par  { font-weight: 600; color: var(--text); }
+  .hist-meta { font-size: 0.58rem; color: var(--muted); margin-top: 1px; }
+  .hist-pnl  { font-family: var(--mono); font-size: 0.68rem; font-weight: 600; }
+
+  /* ── NOTIFICATION ─────────────────────────────── */
+  #notif {
+    position: fixed; bottom: 1.5rem; right: 1.5rem;
+    background: var(--card);
+    border: 1px solid var(--green);
+    border-radius: 10px; padding: 0.6rem 1rem;
+    font-size: 0.7rem; font-weight: 500; color: var(--green);
+    z-index: 999; opacity: 0; transform: translateY(10px);
+    transition: all 0.28s ease; pointer-events: none;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  #notif.show { opacity: 1; transform: translateY(0); }
+
+  /* ── MOBILE ───────────────────────────────────── */
+  @media(max-width: 540px) {
+    main { padding: 0.75rem; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    header { padding: 0 0.875rem; }
+    .header-bot-status { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">SMC_BOTS</div>
+  <div class="header-right">
+    <div class="header-bot-status">
+      <div class="pulse-dot green" id="long-pulse"></div>
+      <span class="header-bot-label">LONG</span>
+      <span id="long-badge" class="badge long-online">ONLINE</span>
+    </div>
+    <div class="header-bot-status">
+      <div class="pulse-dot red" id="short-pulse"></div>
+      <span class="header-bot-label">SHORT</span>
+      <span id="short-badge" class="badge short-online">ONLINE</span>
+    </div>
+    <span id="last-update">--:--</span>
+  </div>
+</header>
+
+<main>
+  <div class="bots-split">
+
+    <!-- ══════════ BOT LONG ══════════ -->
+    <div class="bot-panel">
+      <div class="bot-header long-header">
+        <div>
+          <div class="bot-name long">◈ BOT KUCOIN</div>
+          <div class="bot-exchange">KuCoin Futures · XBTUSDTM · ETHUSDTM · SOLUSDTM · XRPUSDTM</div>
+        </div>
+        <div class="controls">
+          <button class="btn btn-pause"  onclick="pausarBot('long')">⏸ Pausar</button>
+          <button class="btn btn-resume" onclick="reactivarBot('long')">▶ Reactivar</button>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat accent-top">
+          <div class="stat-label">Balance</div>
+          <div class="stat-val green" id="l-capital">$—</div>
+          <div class="stat-sub">USDT</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">P&L Abierto</div>
+          <div class="stat-val" id="l-pnl">$—</div>
+          <div class="stat-sub" id="l-pnl-pct">—</div>
+        </div>
+        <div class="stat blue-top">
+          <div class="stat-label">Posiciones</div>
+          <div class="stat-val blue" id="l-num-pos">—</div>
+          <div class="stat-sub">Abiertas</div>
+        </div>
+        <div class="stat accent-top">
+          <div class="stat-label">Ganadas</div>
+          <div class="stat-val green" id="l-wins">—</div>
+          <div class="stat-sub" id="l-wr">Win rate</div>
+          <div class="wr-bar"><div class="wr-fill" id="l-wr-fill" style="width:0%"></div></div>
+        </div>
+        <div class="stat red-top">
+          <div class="stat-label">Perdidas</div>
+          <div class="stat-val red" id="l-losses">—</div>
+          <div class="stat-sub" id="l-pnl-hist">P&L total</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Ciclo</div>
+          <div class="stat-val" id="l-ciclo">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Posiciones Long</span>
+          <span class="card-badge" id="l-pos-count">0</span>
+        </div>
+        <div id="l-pos-cards" class="pos-cards">
+          <div class="empty">Sin posiciones abiertas</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Log en vivo</span>
+          <span class="card-badge" id="l-log-count">0</span>
+        </div>
+        <div class="log-list" id="l-log-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Historial</span>
+          <span class="card-badge" id="l-hist-count">0</span>
+        </div>
+        <div style="padding:0 1rem" id="l-hist-list">
+          <div class="empty">Sin historial</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ BOT SHORT ══════════ -->
+    <div class="bot-panel">
+      <div class="bot-header short-header">
+        <div>
+          <div class="bot-name short">◈ BOT BINGX</div>
+          <div class="bot-exchange">BingX Futures · BTC-USDT · ETH-USDT · SOL-USDT · XRP-USDT</div>
+        </div>
+        <div class="controls">
+          <button class="btn btn-pause"       onclick="pausarBot('short')">⏸ Pausar</button>
+          <button class="btn btn-resume red"  onclick="reactivarBot('short')">▶ Reactivar</button>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat accent-top">
+          <div class="stat-label">Balance</div>
+          <div class="stat-val green" id="s-capital">$—</div>
+          <div class="stat-sub">USDT</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">P&L Abierto</div>
+          <div class="stat-val" id="s-pnl">$—</div>
+          <div class="stat-sub" id="s-pnl-pct">—</div>
+        </div>
+        <div class="stat blue-top">
+          <div class="stat-label">Posiciones</div>
+          <div class="stat-val blue" id="s-num-pos">—</div>
+          <div class="stat-sub">Abiertas</div>
+        </div>
+        <div class="stat accent-top">
+          <div class="stat-label">Ganadas</div>
+          <div class="stat-val green" id="s-wins">—</div>
+          <div class="stat-sub" id="s-wr">Win rate</div>
+          <div class="wr-bar"><div class="wr-fill" id="s-wr-fill" style="width:0%"></div></div>
+        </div>
+        <div class="stat red-top">
+          <div class="stat-label">Perdidas</div>
+          <div class="stat-val red" id="s-losses">—</div>
+          <div class="stat-sub" id="s-pnl-hist">P&L total</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Ciclo</div>
+          <div class="stat-val" id="s-ciclo">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Posiciones Short</span>
+          <span class="card-badge" id="s-pos-count">0</span>
+        </div>
+        <div id="s-pos-cards" class="pos-cards">
+          <div class="empty">Sin posiciones abiertas</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Log en vivo</span>
+          <span class="card-badge" id="s-log-count">0</span>
+        </div>
+        <div class="log-list" id="s-log-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Historial</span>
+          <span class="card-badge" id="s-hist-count">0</span>
+        </div>
+        <div style="padding:0 1rem" id="s-hist-list">
+          <div class="empty">Sin historial</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<div id="notif"></div>
+
+<script>
+  const LONG_URL  = '';
+  const SHORT_URL = 'https://smc-short-bot-production.up.railway.app';
+
+  function showNotif(msg, color) {
+    const n = document.getElementById('notif');
+    n.textContent = msg;
+    n.style.borderColor = color || 'var(--green)';
+    n.style.color = color || 'var(--green)';
+    n.classList.add('show');
+    setTimeout(() => n.classList.remove('show'), 3000);
+  }
+
+  function fmt(n, dec=2) {
+    if (n === undefined || n === null) return '—';
+    return parseFloat(n).toFixed(dec);
+  }
+
+  function renderPosCards(pos, prefix) {
+    const el = document.getElementById(prefix + '-pos-cards');
+    document.getElementById(prefix + '-pos-count').textContent = pos.length;
+    document.getElementById(prefix + '-num-pos').textContent = pos.length;
+    if (!pos.length) {
+      el.innerHTML = '<div class="empty">Sin posiciones abiertas</div>';
+      return 0;
+    }
+    let pnlTotal = 0;
+    el.innerHTML = pos.map(p => {
+      const pnl    = parseFloat(p.pnl || 0);
+      pnlTotal    += pnl;
+      const isLong = (p.dir||p.lado||'').toUpperCase() === 'LONG';
+      const pnlCls = pnl >= 0 ? 'pos' : 'neg';
+      const pnlSign = pnl >= 0 ? '+' : '';
+      return `
+      <div class="pos-card ${isLong ? 'long-card' : 'short-card'}">
+        <div class="pos-card-top">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span class="pos-par">${p.simbolo||'—'}</span>
+            <span class="pos-side ${isLong?'long':'short'}">${isLong?'Long':'Short'}</span>
+            <span class="pos-lev">10x</span>
+          </div>
+          <span class="pos-ia">IA ${p.confianza_ia||'—'}%</span>
+        </div>
+        <div class="pos-pnl ${pnlCls}">
+          ${pnlSign}$${fmt(pnl)}
+          <span class="pct">${pnlSign}${fmt(p.pnl_pct||0,2)}%</span>
+        </div>
+        <div class="pos-details">
+          <div>Entrada</div><div class="val">$${fmt(p.entrada,4)}</div>
+          <div>${p.tp1 ? (p.tp1_hit ? 'TP1 ✅' : 'TP1') : 'TP'}</div><div class="val" style="color:var(--green)">$${fmt(p.tp1||p.tp,4)}</div>
+          ${p.tp2 ? `<div>${p.tp1_hit?'TP2 🎯':'TP2'}</div><div class="val" style="color:#f7931a">$${fmt(p.tp2,4)}</div>` : ''}
+          <div>SL</div><div class="val" style="color:var(--red)">${p.tp1_hit?'🔒 BE ':''} $${fmt(p.sl,4)}</div>
+          <div>Margen</div><div class="val">$${fmt(p.margen)}</div>
+        </div>
+        <button class="btn-cerrar" onclick="cerrarManual('${p.simbolo}','${prefix}')">Cerrar ${p.simbolo}</button>
+      </div>`;
+    }).join('');
+    return pnlTotal;
+  }
+
+  async function cargarEstado(prefix, baseUrl) {
+    try {
+      const r = await fetch(baseUrl + '/api/estado');
+      if (!r.ok) throw new Error();
+      const d = await r.json();
+
+      document.getElementById(prefix + '-capital').textContent = '$' + fmt(d.capital);
+      document.getElementById(prefix + '-ciclo').textContent = d.ciclo || '—';
+
+      const badgeId = prefix === 'l' ? 'long-badge' : 'short-badge';
+      const badge = document.getElementById(badgeId);
+      if (d.pausado) {
+        badge.textContent = 'PAUSADO'; badge.className = 'badge offline';
+      } else {
+        badge.textContent = 'ONLINE';
+        badge.className = prefix === 'l' ? 'badge long-online' : 'badge short-online';
+      }
+
+      const pos = d.posiciones || [];
+      const pnlTotal = renderPosCards(pos, prefix);
+
+      const pnlEl = document.getElementById(prefix + '-pnl');
+      pnlEl.textContent = (pnlTotal>=0?'+':'') + '$' + fmt(pnlTotal);
+      pnlEl.className = 'stat-val ' + (pnlTotal>=0?'green':'red');
+      const cap = parseFloat(d.capital) || 1;
+      document.getElementById(prefix + '-pnl-pct').textContent = fmt(pnlTotal/cap*100) + '%';
+
+    } catch(e) {
+      const badgeId = prefix === 'l' ? 'long-badge' : 'short-badge';
+      document.getElementById(badgeId).textContent = 'ERROR';
+      document.getElementById(badgeId).className = 'badge offline';
+    }
+  }
+
+  async function cargarLogs(prefix, baseUrl) {
+    try {
+      const r = await fetch(baseUrl + '/api/logs');
+      if (!r.ok) return;
+      const d = await r.json();
+      const logs = (d.logs || []).slice(-40).reverse();
+      document.getElementById(prefix + '-log-count').textContent = logs.length;
+      const list = document.getElementById(prefix + '-log-list');
+      list.innerHTML = logs.map(l => {
+        const lvl = (l.nivel || '').toLowerCase();
+        const msg = l.mensaje || l;
+        let cls = 'log-msg';
+        if (lvl === 'error') cls += ' error';
+        else if (lvl === 'warning' || lvl === 'warn') cls += ' warn';
+        else if (typeof msg === 'string' && (msg.includes('OK') || msg.includes('APRUEBA') || msg.includes('EJECUTANDO'))) cls += ' ok';
+        const time = (l.tiempo || '').slice(11, 19);
+        return `<div class="log-row"><span class="log-time">${time}</span><span class="${cls}">${msg}</span></div>`;
+      }).join('');
+    } catch(e) {}
+  }
+
+  async function cargarHistorial(prefix, baseUrl) {
+    try {
+      const r = await fetch(baseUrl + '/api/historial');
+      if (!r.ok) return;
+      const d = await r.json();
+      const hist = d.historial || d || [];
+      document.getElementById(prefix + '-hist-count').textContent = hist.length;
+      const el = document.getElementById(prefix + '-hist-list');
+      if (!hist.length) { el.innerHTML = '<div class="empty">Sin historial</div>'; return; }
+
+      const wins   = hist.filter(h => parseFloat(h.pnl||0) > 0).length;
+      const losses = hist.filter(h => parseFloat(h.pnl||0) < 0).length;
+      const total  = hist.length;
+      const wr     = total ? Math.round(wins/total*100) : 0;
+      const pnlSum = hist.reduce((a,h) => a + parseFloat(h.pnl||0), 0);
+
+      document.getElementById(prefix + '-wins').textContent    = wins;
+      document.getElementById(prefix + '-losses').textContent  = losses;
+      document.getElementById(prefix + '-wr').textContent      = `Win rate ${wr}%`;
+      document.getElementById(prefix + '-wr-fill').style.width = wr + '%';
+      document.getElementById(prefix + '-pnl-hist').textContent = (pnlSum>=0?'+':'') + '$' + fmt(pnlSum);
+
+      el.innerHTML = hist.slice(-15).reverse().map(h => {
+        const pnl = parseFloat(h.pnl||0);
+        const cls = pnl >= 0 ? 'pos' : 'neg';
+        return `<div class="hist-item">
+          <div>
+            <div class="hist-par">${h.simbolo||'—'} <span style="color:var(--muted);font-weight:400">${(h.lado||'').toUpperCase()}</span></div>
+            <div class="hist-meta">${h.fecha||h.tiempo||'—'}${h.motivo?' · '+h.motivo:''}</div>
+          </div>
+          <div class="hist-pnl ${cls}">${pnl>=0?'+':''}$${fmt(pnl)}</div>
+        </div>`;
+      }).join('');
+    } catch(e) {}
+  }
+
+  async function pausarBot(bot) {
+    const url = bot === 'long' ? LONG_URL : SHORT_URL;
+    try {
+      const r = await fetch(url + '/api/pausar', { method:'POST' });
+      const d = await r.json();
+      showNotif(d.mensaje || 'Bot pausado', 'var(--warn)');
+      cargarEstado(bot === 'long' ? 'l' : 's', url);
+    } catch(e) { showNotif('Error al pausar', 'var(--red)'); }
+  }
+
+  async function reactivarBot(bot) {
+    const url = bot === 'long' ? LONG_URL : SHORT_URL;
+    try {
+      const r = await fetch(url + '/api/reactivar', { method:'POST' });
+      const d = await r.json();
+      showNotif(d.mensaje || 'Bot reactivado', bot === 'long' ? 'var(--green)' : 'var(--red)');
+      cargarEstado(bot === 'long' ? 'l' : 's', url);
+    } catch(e) { showNotif('Error al reactivar', 'var(--red)'); }
+  }
+
+  async function cerrarManual(simbolo, prefix) {
+    const url = prefix === 'l' ? LONG_URL : SHORT_URL;
+    if (!confirm(`¿Cerrar posición ${simbolo} al precio de mercado?`)) return;
+    try {
+      const r = await fetch(url + '/api/cerrar_manual', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ simbolo })
+      });
+      const d = await r.json();
+      if (d.ok) { showNotif(`✓ ${simbolo} cerrado`, 'var(--green)'); cargarEstado(prefix, url); }
+      else showNotif(`Error: ${d.error}`, 'var(--red)');
+    } catch(e) { showNotif('Error al cerrar', 'var(--red)'); }
+  }
+
+  function tick() {
+    cargarEstado('l', LONG_URL);
+    cargarEstado('s', SHORT_URL);
+    cargarLogs('l', LONG_URL);
+    cargarLogs('s', SHORT_URL);
+    cargarHistorial('l', LONG_URL);
+    cargarHistorial('s', SHORT_URL);
+    document.getElementById('last-update').textContent = new Date().toLocaleTimeString('es-CL');
+  }
+
+  tick();
+  setInterval(tick, 10000);
+</script>
+</body>
+</html>
