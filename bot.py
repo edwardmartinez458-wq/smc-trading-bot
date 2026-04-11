@@ -41,6 +41,7 @@ PARES = [
     "SUIUSDTM",
     "DOTUSDTM",
     "APTUSDTM",
+    "POLUSDTM",
 ]
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
