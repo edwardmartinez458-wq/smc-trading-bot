@@ -303,6 +303,44 @@
   .hist-meta  { font-size: 0.55rem; color: var(--muted); }
   .hist-pnl   { font-family: var(--mono); font-size: 0.8rem; font-weight: 700; flex-shrink: 0; }
 
+  /* ── EQUITY CURVE ──────────────────────────────────── */
+  .equity-wrap {
+    max-width: 1700px; margin: 0 auto;
+    padding: 0 1.25rem 1rem;
+  }
+  .equity-card {
+    background: var(--glass); border: 1px solid var(--border);
+    border-radius: 16px; overflow: hidden; backdrop-filter: blur(12px);
+  }
+  .equity-header {
+    padding: 0.65rem 1rem; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    background: rgba(255,255,255,0.02);
+  }
+  .equity-title { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.1em; color: var(--sub); text-transform: uppercase; }
+  .equity-legend { display: flex; gap: 1rem; }
+  .equity-legend span { font-family: var(--mono); font-size: 0.58rem; display: flex; align-items: center; gap: 5px; }
+  .equity-legend span::before { content:''; width:20px; height:2px; border-radius:2px; display:inline-block; }
+  .equity-legend .kc-leg::before { background: var(--kc); }
+  .equity-legend .bx-leg::before { background: var(--bx); }
+  .equity-legend .tot-leg::before { background: rgba(255,255,255,0.4); }
+  .equity-chart { padding: 0.5rem 1rem 0.75rem; height: 110px; }
+  .equity-chart svg { width: 100%; height: 100%; display: block; overflow: visible; }
+
+  /* ── F&G GAUGE ──────────────────────────────────────── */
+  .fg-gauge-wrap { display: flex; align-items: center; gap: 8px; }
+  .fg-gauge-svg  { width: 48px; height: 28px; overflow: visible; }
+
+  /* ── PNL HOY ─────────────────────────────────────────── */
+  .pnl-hoy-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--mono); font-size: 0.6rem; font-weight: 700;
+    padding: 2px 9px; border-radius: 999px;
+    margin-top: 0.3rem;
+  }
+  .pnl-hoy-badge.pos { background: var(--green-dim); border: 1px solid rgba(0,230,118,0.3); color: var(--green); }
+  .pnl-hoy-badge.neg { background: var(--red-dim);   border: 1px solid rgba(255,77,109,0.3); color: var(--red); }
+
   /* ── NOTIF ──────────────────────────────────────────── */
   #notif {
     position: fixed; bottom: 1.5rem; right: 1.5rem;
@@ -352,11 +390,20 @@
     <span class="mkt-change" id="btc-change">—</span>
   </div>
   <div class="mkt-sep"></div>
-  <!-- Fear & Greed -->
+  <!-- Fear & Greed con gauge -->
   <div class="mkt-item">
     <span class="mkt-label">Miedo/Codicia</span>
-    <span class="mkt-val fg-val" id="fg-num">—</span>
-    <span id="fg-label" style="font-size:0.68rem;color:var(--sub);font-weight:500">—</span>
+    <div class="fg-gauge-wrap">
+      <svg class="fg-gauge-svg" id="fg-gauge-svg" viewBox="0 0 48 28">
+        <path d="M4,24 A20,20 0 0,1 44,24" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="5" stroke-linecap="round"/>
+        <path id="fg-gauge-arc" d="M4,24 A20,20 0 0,1 44,24" fill="none" stroke="#ff4d6d" stroke-width="5" stroke-linecap="round" stroke-dasharray="0 63"/>
+        <circle id="fg-needle" cx="24" cy="24" r="3" fill="white"/>
+      </svg>
+      <div>
+        <span class="mkt-val fg-val" id="fg-num">—</span>
+        <span id="fg-label" style="display:block;font-size:0.55rem;color:var(--sub);font-weight:500;margin-top:1px">—</span>
+      </div>
+    </div>
   </div>
   <div class="mkt-sep"></div>
   <!-- Capital total -->
@@ -371,6 +418,23 @@
     <div class="mkt-meta">
       <div class="mkt-meta-bar"><div class="mkt-meta-fill" id="meta-fill" style="width:0%"></div></div>
       <span class="mkt-meta-pct" id="meta-pct">—</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── EQUITY CURVE ─────────────────────────────────── -->
+<div class="equity-wrap">
+  <div class="equity-card">
+    <div class="equity-header">
+      <span class="equity-title">📈 Equity Curve — Capital en el tiempo</span>
+      <div class="equity-legend">
+        <span class="kc-leg">KuCoin</span>
+        <span class="bx-leg">BingX</span>
+        <span class="tot-leg">Total</span>
+      </div>
+    </div>
+    <div class="equity-chart">
+      <svg id="equity-svg" viewBox="0 0 800 90" preserveAspectRatio="none"></svg>
     </div>
   </div>
 </div>
@@ -424,9 +488,10 @@
           <div class="stat-val red" id="l-losses">—</div>
           <div class="stat-sub" id="l-pnl-hist">P&L total</div>
         </div>
-        <div class="stat">
-          <div class="stat-label">Ciclo</div>
-          <div class="stat-val" id="l-ciclo">—</div>
+        <div class="stat kc-top">
+          <div class="stat-label">PnL Hoy</div>
+          <div class="stat-val" id="l-pnl-hoy">$—</div>
+          <div class="stat-sub" id="l-ciclo-wrap">Ciclo <span id="l-ciclo">—</span></div>
           <div class="stat-sub" id="l-streak-wrap"></div>
         </div>
       </div>
@@ -506,9 +571,10 @@
           <div class="stat-val red" id="s-losses">—</div>
           <div class="stat-sub" id="s-pnl-hist">P&L total</div>
         </div>
-        <div class="stat">
-          <div class="stat-label">Ciclo</div>
-          <div class="stat-val" id="s-ciclo">—</div>
+        <div class="stat bx-top">
+          <div class="stat-label">PnL Hoy</div>
+          <div class="stat-val" id="s-pnl-hoy">$—</div>
+          <div class="stat-sub" id="s-ciclo-wrap">Ciclo <span id="s-ciclo">—</span></div>
           <div class="stat-sub" id="s-streak-wrap"></div>
         </div>
       </div>
@@ -555,6 +621,91 @@
   // Balance history for sparklines (max 30 puntos por sesión)
   const balHistory  = { l: [], s: [] };
   const capitalNow  = { l: 0, s: 0 };
+
+  // ── Equity Curve — persistencia en localStorage ──────
+  const EQ_KEY = 'smc_equity_v2';
+  const todayStr = () => new Date().toISOString().slice(0,10);
+  function loadEquity() {
+    try { return JSON.parse(localStorage.getItem(EQ_KEY)) || { dates:[], kc:[], bx:[], tot:[] }; }
+    catch(e) { return { dates:[], kc:[], bx:[], tot:[] }; }
+  }
+  function saveEquity(eq) { localStorage.setItem(EQ_KEY, JSON.stringify(eq)); }
+  function pushEquity(kc, bx) {
+    const eq  = loadEquity();
+    const now = new Date().toLocaleTimeString('es-CL', {hour:'2-digit',minute:'2-digit'});
+    const lbl = todayStr().slice(5) + ' ' + now;
+    eq.dates.push(lbl); eq.kc.push(kc); eq.bx.push(bx); eq.tot.push(kc+bx);
+    if (eq.dates.length > 200) { eq.dates.shift(); eq.kc.shift(); eq.bx.shift(); eq.tot.shift(); }
+    saveEquity(eq);
+    renderEquity(eq);
+  }
+  function renderEquity(eq) {
+    const svg = document.getElementById('equity-svg');
+    if (!svg || eq.tot.length < 2) return;
+    const W=800, H=90, P=10;
+    function pts(arr) {
+      const mn=Math.min(...arr), mx=Math.max(...arr), rng=(mx-mn)||1;
+      return arr.map((v,i)=>{
+        const x = P + (i/(arr.length-1))*(W-P*2);
+        const y = H-P - ((v-mn)/rng)*(H-P*2);
+        return [x.toFixed(1), y.toFixed(1)];
+      });
+    }
+    function polyline(arr, color, opacity=1) {
+      const p = pts(arr);
+      const line = 'M'+p.map(x=>x.join(',')).join(' L');
+      const area = `M${p[0][0]},${H} L`+p.map(x=>x.join(',')).join(' L')+` L${p[p.length-1][0]},${H} Z`;
+      return `<path d="${area}" fill="${color}" opacity="0.07"/>
+              <path d="${line}" fill="none" stroke="${color}" stroke-width="1.8" opacity="${opacity}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    }
+    svg.innerHTML = polyline(eq.tot,'rgba(255,255,255,0.6)',0.5) +
+                    polyline(eq.kc,'#00f5c8') +
+                    polyline(eq.bx,'#c850ff');
+  }
+
+  // ── PnL del día ──────────────────────────────────────
+  const PNL_KEY = 'smc_pnl_hoy_v2';
+  function getPnlHoy(prefix, capActual) {
+    try {
+      let data = JSON.parse(localStorage.getItem(PNL_KEY)) || {};
+      const key = prefix + '_' + todayStr();
+      if (!data[key]) { data[key] = capActual; localStorage.setItem(PNL_KEY, JSON.stringify(data)); }
+      return capActual - data[key];
+    } catch(e) { return 0; }
+  }
+  function renderPnlHoy(prefix, cap) {
+    const pnl = getPnlHoy(prefix, cap);
+    const el  = document.getElementById(prefix + '-pnl-hoy');
+    if (!el) return;
+    el.textContent = (pnl>=0?'+':'') + '$' + fmt(pnl);
+    el.className   = 'stat-val ' + (pnl>=0?'green':'red');
+  }
+
+  // ── Fear & Greed Gauge ───────────────────────────────
+  function renderFgGauge(val) {
+    const arc    = document.getElementById('fg-gauge-arc');
+    const needle = document.getElementById('fg-needle');
+    if (!arc || !needle) return;
+    const total  = 62.8; // longitud arco semicírculo r=20
+    const filled = (val / 100) * total;
+    arc.style.strokeDasharray = `${filled.toFixed(1)} ${total}`;
+    // Color dinámico
+    let color = '#ff4d6d';
+    if (val > 75) color = '#00e676';
+    else if (val > 54) color = '#7bc67e';
+    else if (val > 46) color = '#ffb300';
+    else if (val > 25) color = '#ff8c42';
+    arc.style.stroke = color;
+    // Aguja
+    const angle = Math.PI - (val / 100) * Math.PI; // 180° → 0°
+    const r = 20;
+    const cx = 24, cy = 24;
+    const nx = cx + r * Math.cos(angle);
+    const ny = cy - r * Math.sin(angle);
+    needle.setAttribute('cx', nx.toFixed(1));
+    needle.setAttribute('cy', ny.toFixed(1));
+    needle.style.fill = color;
+  }
 
   // ── Notificación ────────────────────────────────────
   function showNotif(msg, color) {
@@ -665,6 +816,17 @@
       if (balHistory[prefix].length > 30) balHistory[prefix].shift();
       renderSparkline(prefix + '-spark', balHistory[prefix]);
       updateMeta();
+
+      // PnL del día
+      renderPnlHoy(prefix, cap);
+
+      // Equity curve
+      if (capitalNow.l > 0 && capitalNow.s > 0) {
+        pushEquity(capitalNow.l, capitalNow.s);
+      } else {
+        const eq = loadEquity();
+        if (eq.tot.length > 1) renderEquity(eq);
+      }
 
       const isKc  = prefix === 'l';
       const pill  = document.getElementById(isKc ? 'kc-pill'    : 'bx-pill');
@@ -808,6 +970,7 @@
         else if (val <= 75) cls += 'fg-greed';
         else                cls += 'fg-extreme-greed';
         nEl.className = cls;
+        renderFgGauge(val);
       }
     } catch(e) {}
   }
