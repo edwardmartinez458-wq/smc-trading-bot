@@ -37,15 +37,16 @@ COINGLASS_API_KEY  = os.getenv("COINGLASS_API_KEY", "")
 # Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
     "INJUSDTM",
-    "XRPUSDTM",
     "SUIUSDTM",
     "DOTUSDTM",
     "APTUSDTM",
     "POLUSDTM",
+    "SOLUSDTM",
+    "AVAXUSDTM",
 ]
 
 # Pares que solo operan LONG (backtest confirma que SHORT no funciona)
-PARES_SOLO_LONG = ["DOTUSDTM"]
+PARES_SOLO_LONG = ["DOTUSDTM", "AVAXUSDTM"]
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
@@ -1889,6 +1890,18 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     if not ia["entrar"]:
         log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
         return
+
+    # Filtro Fear & Greed dinamico
+    try:
+        fg_raw = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5).json()
+        fg_val = int(fg_raw["data"][0]["value"])
+    except Exception:
+        fg_val = 50  # neutro si falla la API
+    umbral_fg = 75 if fg_val <= 20 else 65
+    if ia["confianza"] < umbral_fg:
+        log.info(f"{simbolo} — RECHAZADO: F&G={fg_val} → umbral IA={umbral_fg}% | confianza={ia['confianza']}%")
+        return
+    log.info(f"{simbolo} — F&G={fg_val} → umbral={umbral_fg}% OK | confianza={ia['confianza']}%")
 
     log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
     abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v, atr=atr)
