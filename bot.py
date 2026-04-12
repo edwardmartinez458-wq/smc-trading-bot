@@ -111,6 +111,34 @@ estado = {
 }
 lock = threading.Lock()
 
+# ─── PERSISTENCIA DE ESTADO ──────────────────────────────────────────────────
+_PERSIST_PATH = "estado_persistente.json"
+_CAMPOS_PERSIST = ["ciclo", "ops_total", "ops_ganadas", "capital_inicial", "perdidas_seguidas", "circuit_breaker", "sl_diario_activo"]
+
+def guardar_estado_persistente():
+    try:
+        with lock:
+            datos = {k: estado[k] for k in _CAMPOS_PERSIST}
+        with open(_PERSIST_PATH, "w") as f:
+            json.dump(datos, f)
+    except Exception as e:
+        log.error(f"Persistencia guardar: {e}")
+
+def cargar_estado_persistente():
+    try:
+        if os.path.exists(_PERSIST_PATH):
+            with open(_PERSIST_PATH) as f:
+                datos = json.load(f)
+            with lock:
+                for k in _CAMPOS_PERSIST:
+                    if k in datos:
+                        estado[k] = datos[k]
+            log.info(f"Estado restaurado: ciclo={datos.get('ciclo',0)} ops={datos.get('ops_total',0)} ganadas={datos.get('ops_ganadas',0)}")
+    except Exception as e:
+        log.error(f"Persistencia cargar: {e}")
+
+cargar_estado_persistente()
+
 # Posiciones cerradas recientemente por el bot (evita re-agregar en sync por 5 min)
 _cerradas_reciente = {}  # {simbolo: timestamp}
 _CERRADA_TTL = 300  # 5 minutos
@@ -1596,6 +1624,7 @@ def _cerrar_posicion(p: dict, pc: float):
     guardar_historial(p["simbolo"], p["dir"], p["entrada"], pc,
                       pnl, resultado, p.get("confianza_ia", 0))
     guardar_memoria_trade(p, pc, resultado, pnl)
+    guardar_estado_persistente()
 
     wr = ops_g / ops_t * 100 if ops_t else 0
     signo = "+" if pnl > 0 else ""
@@ -2406,6 +2435,7 @@ def main():
         with lock:
             estado["ciclo"] += 1
             ciclo = estado["ciclo"]
+        guardar_estado_persistente()
 
         log.info(f"CICLO {ciclo} | {datetime.now().strftime('%Y-%m-%d %H:%M')} | Venezuela: {hora_venezuela()}h")
 
