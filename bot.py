@@ -44,6 +44,9 @@ PARES = [
     "POLUSDTM",
 ]
 
+# Pares que solo operan LONG (backtest confirma que SHORT no funciona)
+PARES_SOLO_LONG = ["DOTUSDTM"]
+
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
 TP_PCT         = 0.15
@@ -1826,6 +1829,9 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
 
     # SHORT: EMA21 < EMA89 + EMA89 bajando + RSI 32-75
     elif t == "bajista":
+        if simbolo in PARES_SOLO_LONG:
+            log.info(f"{simbolo} — RECHAZADO: par en lista SOLO_LONG, no se opera SHORT")
+            return
         if ema21_v >= ema89_v:
             log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin estructura bajista 4H)")
             return
