@@ -227,6 +227,10 @@
     background: rgba(255,255,255,0.02);
   }
   .card-title { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.1em; color: var(--sub); text-transform: uppercase; }
+  .card-header.kc-header { border-left: 3px solid var(--kc); background: rgba(0,245,200,0.04); }
+  .card-header.kc-header .card-title { color: var(--kc); }
+  .card-header.bx-header { border-left: 3px solid var(--bx); background: rgba(200,80,255,0.04); }
+  .card-header.bx-header .card-title { color: var(--bx); }
   .card-badge {
     font-family: var(--mono); font-size: 0.56rem; color: var(--muted);
     background: rgba(255,255,255,0.04);
@@ -498,7 +502,7 @@
       </div>
 
       <div class="card">
-        <div class="card-header">
+        <div class="card-header kc-header">
           <span class="card-title">Posiciones Abiertas</span>
           <span class="card-badge" id="l-pos-count">0</span>
         </div>
@@ -508,7 +512,7 @@
       </div>
 
       <div class="card">
-        <div class="card-header">
+        <div class="card-header kc-header">
           <span class="card-title">Log en vivo</span>
           <span class="card-badge" id="l-log-count">0</span>
         </div>
@@ -516,7 +520,7 @@
       </div>
 
       <div class="card">
-        <div class="card-header">
+        <div class="card-header kc-header">
           <span class="card-title">Últimas Operaciones</span>
           <span class="card-badge" id="l-hist-count">0</span>
         </div>
@@ -581,7 +585,7 @@
       </div>
 
       <div class="card">
-        <div class="card-header">
+        <div class="card-header bx-header">
           <span class="card-title">Posiciones Abiertas</span>
           <span class="card-badge" id="s-pos-count">0</span>
         </div>
@@ -591,7 +595,7 @@
       </div>
 
       <div class="card">
-        <div class="card-header">
+        <div class="card-header bx-header">
           <span class="card-title">Log en vivo</span>
           <span class="card-badge" id="s-log-count">0</span>
         </div>
@@ -599,7 +603,7 @@
       </div>
 
       <div class="card">
-        <div class="card-header">
+        <div class="card-header bx-header">
           <span class="card-title">Últimas Operaciones</span>
           <span class="card-badge" id="s-hist-count">0</span>
         </div>
