@@ -1897,7 +1897,7 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         fg_val = int(fg_raw["data"][0]["value"])
     except Exception:
         fg_val = 50  # neutro si falla la API
-    umbral_fg = 75 if fg_val <= 20 else 65
+    umbral_fg = 65
     if ia["confianza"] < umbral_fg:
         log.info(f"{simbolo} — RECHAZADO: F&G={fg_val} → umbral IA={umbral_fg}% | confianza={ia['confianza']}%")
         return
