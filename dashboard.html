@@ -496,7 +496,6 @@
         <div class="stat kc-top">
           <div class="stat-label">PnL Hoy</div>
           <div class="stat-val" id="l-pnl-hoy">$—</div>
-          <div class="ciclo-badge">🔄 Ciclo <span id="l-ciclo">—</span></div>
           <div class="stat-sub" id="l-streak-wrap"></div>
         </div>
       </div>
@@ -504,7 +503,10 @@
       <div class="card">
         <div class="card-header kc-header">
           <span class="card-title">Posiciones Abiertas</span>
-          <span class="card-badge" id="l-pos-count">0</span>
+          <div style="display:flex;align-items:center;gap:0.5rem;">
+            <span class="card-badge" id="l-pos-count">0</span>
+            <span class="ciclo-badge">🔄 Ciclo <span id="l-ciclo">—</span></span>
+          </div>
         </div>
         <div id="l-pos-cards" class="pos-cards">
           <div class="empty">Sin posiciones abiertas</div>
@@ -579,7 +581,6 @@
         <div class="stat bx-top">
           <div class="stat-label">PnL Hoy</div>
           <div class="stat-val" id="s-pnl-hoy">$—</div>
-          <div class="ciclo-badge">🔄 Ciclo <span id="s-ciclo">—</span></div>
           <div class="stat-sub" id="s-streak-wrap"></div>
         </div>
       </div>
@@ -587,7 +588,10 @@
       <div class="card">
         <div class="card-header bx-header">
           <span class="card-title">Posiciones Abiertas</span>
-          <span class="card-badge" id="s-pos-count">0</span>
+          <div style="display:flex;align-items:center;gap:0.5rem;">
+            <span class="card-badge" id="s-pos-count">0</span>
+            <span class="ciclo-badge">🔄 Ciclo <span id="s-ciclo">—</span></span>
+          </div>
         </div>
         <div id="s-pos-cards" class="pos-cards">
           <div class="empty">Sin posiciones abiertas</div>
