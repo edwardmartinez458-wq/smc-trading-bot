@@ -1411,7 +1411,7 @@ def abrir(simbolo, t, pc, ia, rsi=0, adx=0, ema21=0, ema89=0, atr=0):
     sl_dist  = max(atr_val * 1.5, pc * 0.02)  # v3f: 1.5x ATR
     sl_pct   = sl_dist / pc
     tp1_dist = max(atr_val * 1.5, pc * 0.02)  # v3f: R:R 1:1
-    tp2_dist = max(atr_val * 1.5, pc * 0.02)  # mismo que TP1 (unico TP)
+    tp2_dist = max(atr_val * 4.0, pc * 0.04)  # safety net lejano — trailing ATR por software
     sl  = round(pc - sl_dist  if lado == "buy" else pc + sl_dist,  6)
     tp1 = round(pc + tp1_dist if lado == "buy" else pc - tp1_dist, 6)
     tp2 = round(pc + tp2_dist if lado == "buy" else pc - tp2_dist, 6)
@@ -1475,6 +1475,8 @@ def abrir(simbolo, t, pc, ia, rsi=0, adx=0, ema21=0, ema89=0, atr=0):
             "p_pot":        round(p_pot, 2),
             "confianza_ia":  ia["confianza"],
             "tipo":          "regular",
+            "trailing_activo": False,
+            "trailing_atr":    round(atr_val, 6),
             "ts":            datetime.now().isoformat(),
             "rsi_entrada":   round(rsi, 1),
             "adx_entrada":   round(adx, 1),
@@ -1519,14 +1521,15 @@ def _cerrar_posicion(p: dict, pc: float):
                 "reduceOnly":    True,
             })
             with lock:
-                p["tp1_hit"] = True
-                p["sl"]      = p["entrada"]   # breakeven
-                p["sl_oid"]  = nuevo_sl_oid
-                p["tp"]      = p["tp2"]        # ahora monitorear TP2
-                p["cantidad"] = cant_tp2
+                p["tp1_hit"]       = True
+                p["trailing_activo"] = True
+                p["sl"]            = p["entrada"]   # breakeven
+                p["sl_oid"]        = nuevo_sl_oid
+                p["tp"]            = p["tp2"]        # safety net a 4x ATR
+                p["cantidad"]      = cant_tp2
                 estado["capital"] += pnl_parcial
-            log.warning(f"{p['simbolo']} TP1 +${pnl_parcial:.2f} | SL → breakeven ${p['entrada']:.4f} | Esperando TP2 ${p['tp2']:.4f}")
-            tg(f"✅ TP1 {p['simbolo']} {p['dir']} +${pnl_parcial:.2f} USDT\nSL movido a breakeven — esperando TP2 ${p['tp2']:.4f}")
+            log.warning(f"{p['simbolo']} TP1 +${pnl_parcial:.2f} | SL → breakeven | TRAILING ATR activado")
+            tg(f"✅ TP1 {p['simbolo']} {p['dir']} +${pnl_parcial:.2f} USDT\nSL → breakeven | TRAILING ATR activo — dejando correr 50% restante")
             return
 
     tp_ok = (p["dir"] == "LONG" and pc >= p["tp"]) or (p["dir"] == "SHORT" and pc <= p["tp"])
@@ -1547,33 +1550,49 @@ def _cerrar_posicion(p: dict, pc: float):
         ganancia_actual = (pc - p["entrada"]) / p["entrada"] if p["dir"] == "LONG" \
                           else (p["entrada"] - pc) / p["entrada"]
 
-        if ganancia_actual > 0 and retroceso > 0:
-            cerrar_trailing = False
-            razon_trailing  = ""
-
-            if retroceso >= 0.10:
-                cerrar_trailing = True
-                razon_trailing  = f"Retroceso -10% desde ${precio_ref:.4f}"
-
-            elif retroceso >= 0.07:
-                df_1h_t = velas(p["simbolo"], "60", 20)
-                rsi_1h  = calcular_rsi(df_1h_t) if not df_1h_t.empty else 50
-                if (p["dir"] == "LONG" and rsi_1h < 55) or (p["dir"] == "SHORT" and rsi_1h > 45):
+        if ganancia_actual > 0:
+            if p.get("trailing_activo"):
+                # ── Trailing ATR: cierra cuando precio retrocede 1x ATR desde el max/min ──
+                t_atr = p.get("trailing_atr") or p.get("atr_entrada") or 0
+                if t_atr > 0:
+                    if p["dir"] == "LONG":
+                        trailing_sl = precio_ref - t_atr
+                        if pc <= trailing_sl:
+                            ganancia_pct = round(ganancia_actual * 100, 1)
+                            log.warning(f"{p['simbolo']} TRAILING ATR: ${pc:.4f} cruzó SL ${trailing_sl:.4f} (max ${precio_ref:.4f} - ATR) | +{ganancia_pct}%")
+                            tg(f"🔒 TRAILING ATR {p['simbolo']} {p['dir']}\nMax: ${precio_ref:.4f} | SL: ${trailing_sl:.4f}\nGanancia: +{ganancia_pct}%")
+                            sl_ok = True
+                    else:
+                        trailing_sl = precio_ref + t_atr
+                        if pc >= trailing_sl:
+                            ganancia_pct = round(ganancia_actual * 100, 1)
+                            log.warning(f"{p['simbolo']} TRAILING ATR: ${pc:.4f} cruzó SL ${trailing_sl:.4f} (min ${precio_ref:.4f} + ATR) | +{ganancia_pct}%")
+                            tg(f"🔒 TRAILING ATR {p['simbolo']} {p['dir']}\nMin: ${precio_ref:.4f} | SL: ${trailing_sl:.4f}\nGanancia: +{ganancia_pct}%")
+                            sl_ok = True
+            elif retroceso > 0:
+                # ── Trailing % (antes de TP1 — protección básica) ────────────────────
+                cerrar_trailing = False
+                razon_trailing  = ""
+                if retroceso >= 0.10:
                     cerrar_trailing = True
-                    razon_trailing  = f"Retroceso -7% + RSI 1H {rsi_1h:.0f}"
-
-            elif retroceso >= 0.03:
-                df_1h_t = velas(p["simbolo"], "60", 20)
-                rsi_1h  = calcular_rsi(df_1h_t) if not df_1h_t.empty else 50
-                if (p["dir"] == "LONG" and rsi_1h < 50) or (p["dir"] == "SHORT" and rsi_1h > 50):
-                    cerrar_trailing = True
-                    razon_trailing  = f"Retroceso -3% + RSI 1H {rsi_1h:.0f}"
-
-            if cerrar_trailing:
-                ganancia_pct = round(ganancia_actual * 100, 1)
-                log.warning(f"{p['simbolo']} TRAILING: {razon_trailing} | Ganancia: +{ganancia_pct}%")
-                tg(f"🔒 TRAILING STOP {p['simbolo']} {p['dir']}\n{razon_trailing}\nGanancia protegida: +{ganancia_pct}%")
-                sl_ok = True
+                    razon_trailing  = f"Retroceso -10% desde ${precio_ref:.4f}"
+                elif retroceso >= 0.07:
+                    df_1h_t = velas(p["simbolo"], "60", 20)
+                    rsi_1h  = calcular_rsi(df_1h_t) if not df_1h_t.empty else 50
+                    if (p["dir"] == "LONG" and rsi_1h < 55) or (p["dir"] == "SHORT" and rsi_1h > 45):
+                        cerrar_trailing = True
+                        razon_trailing  = f"Retroceso -7% + RSI 1H {rsi_1h:.0f}"
+                elif retroceso >= 0.03:
+                    df_1h_t = velas(p["simbolo"], "60", 20)
+                    rsi_1h  = calcular_rsi(df_1h_t) if not df_1h_t.empty else 50
+                    if (p["dir"] == "LONG" and rsi_1h < 50) or (p["dir"] == "SHORT" and rsi_1h > 50):
+                        cerrar_trailing = True
+                        razon_trailing  = f"Retroceso -3% + RSI 1H {rsi_1h:.0f}"
+                if cerrar_trailing:
+                    ganancia_pct = round(ganancia_actual * 100, 1)
+                    log.warning(f"{p['simbolo']} TRAILING: {razon_trailing} | Ganancia: +{ganancia_pct}%")
+                    tg(f"🔒 TRAILING STOP {p['simbolo']} {p['dir']}\n{razon_trailing}\nGanancia protegida: +{ganancia_pct}%")
+                    sl_ok = True
 
     # Cierre por cambio de tendencia (solo posiciones abiertas por el bot, no recuperadas)
     t_btc = estado.get("tendencia_btc", "lateral")
