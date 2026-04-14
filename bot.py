@@ -1594,6 +1594,22 @@ def _cerrar_posicion(p: dict, pc: float):
                     tg(f"🔒 TRAILING STOP {p['simbolo']} {p['dir']}\n{razon_trailing}\nGanancia protegida: +{ganancia_pct}%")
                     sl_ok = True
 
+    # ── CIERRE ANTICIPADO: ganancia >=3.1% + BTC cae >1.5% en 1H ────────────
+    if not sl_ok and not tp_ok and ganancia_actual >= 0.031:
+        try:
+            df_btc_1h = velas("XBTUSDTM", "60", 5)
+            if not df_btc_1h.empty and len(df_btc_1h) >= 2:
+                btc_ahora = float(df_btc_1h["close"].iloc[-1])
+                btc_antes = float(df_btc_1h["close"].iloc[-2])
+                btc_caida = (btc_ahora - btc_antes) / btc_antes
+                if btc_caida <= -0.015:
+                    ganancia_pct = round(ganancia_actual * 100, 1)
+                    log.warning(f"{p['simbolo']} CIERRE ANTICIPADO: ganancia +{ganancia_pct}% + BTC cae {btc_caida*100:.1f}% en 1H")
+                    tg(f"🔒 CIERRE ANTICIPADO {p['simbolo']} {p['dir']}\nGanancia: +{ganancia_pct}% | BTC cayó {btc_caida*100:.1f}%\nProtegiendo ganancia antes del SL")
+                    sl_ok = True
+        except Exception as e:
+            log.warning(f"Cierre anticipado BTC error: {e}")
+
     # Cierre por cambio de tendencia (solo posiciones abiertas por el bot, no recuperadas)
     t_btc = estado.get("tendencia_btc", "lateral")
     tendencia_invertida = (p["dir"] == "SHORT" and t_btc == "alcista") or \
