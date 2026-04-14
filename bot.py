@@ -1947,6 +1947,12 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         log.info(f"{simbolo} — RECHAZADO: 15min no confirma (2/3 velas) direccion {t}")
         return
 
+    # ── FILTRO DISTANCIA EMA21 15m — no entrar si precio ya corrió >2% ────────
+    distancia_ema = abs(pc - ema21_15m) / ema21_15m
+    if distancia_ema > 0.02:
+        log.info(f"{simbolo} — RECHAZADO: precio ${pc:.4f} lejos {distancia_ema*100:.1f}% de EMA21 15m ${ema21_15m:.4f} (max 2%)")
+        return
+
     log.info(f"{simbolo} — EMA 4H + RSI/ADX 1H + 15min OK — consultando IA...")
     ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
     ia = filtro_ia(simbolo, t, pc, ob_ctx, 0)
