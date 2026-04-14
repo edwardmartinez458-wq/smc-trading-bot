@@ -1520,15 +1520,17 @@ def _cerrar_posicion(p: dict, pc: float):
                 "size":          cant_tp2,
                 "reduceOnly":    True,
             })
+            PARES_SIN_TRAILING = {"INJUSDTM", "AVAXUSDTM"}
             with lock:
                 p["tp1_hit"]       = True
-                p["trailing_activo"] = True
+                p["trailing_activo"] = p["simbolo"] not in PARES_SIN_TRAILING
                 p["sl"]            = p["entrada"]   # breakeven
                 p["sl_oid"]        = nuevo_sl_oid
                 p["tp"]            = p["tp2"]        # safety net a 4x ATR
                 p["cantidad"]      = cant_tp2
                 estado["capital"] += pnl_parcial
-            log.warning(f"{p['simbolo']} TP1 +${pnl_parcial:.2f} | SL → breakeven | TRAILING ATR activado")
+            trail_txt = "TRAILING ATR activado" if p["trailing_activo"] else "sin trailing (par excluido)"
+            log.warning(f"{p['simbolo']} TP1 +${pnl_parcial:.2f} | SL → breakeven | {trail_txt}")
             tg(f"✅ TP1 {p['simbolo']} {p['dir']} +${pnl_parcial:.2f} USDT\nSL → breakeven | TRAILING ATR activo — dejando correr 50% restante")
             return
 
@@ -1963,11 +1965,12 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         log.info(f"{simbolo} — RECHAZADO: 15min no confirma (2/3 velas) direccion {t}")
         return
 
-    # ── FILTRO DISTANCIA EMA21 15m — no entrar si precio ya corrió >2% ────────
-    distancia_ema = abs(pc - ema21_15m) / ema21_15m
-    if distancia_ema > 0.02:
-        log.info(f"{simbolo} — RECHAZADO: precio ${pc:.4f} lejos {distancia_ema*100:.1f}% de EMA21 15m ${ema21_15m:.4f} (max 2%)")
-        return
+    # ── FILTRO DISTANCIA EMA21 15m — solo en modo momentum, max 2.1% ──────────
+    if modo_momentum:
+        distancia_ema = abs(pc - ema21_15m) / ema21_15m
+        if distancia_ema > 0.021:
+            log.info(f"{simbolo} — RECHAZADO: precio ${pc:.4f} lejos {distancia_ema*100:.1f}% de EMA21 15m ${ema21_15m:.4f} (momentum max 2.1%)")
+            return
 
     log.info(f"{simbolo} — EMA 4H + RSI/ADX 1H + 15min OK — consultando IA...")
     ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
