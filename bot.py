@@ -1811,32 +1811,77 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     # EMA89 pendiente (para confirmar estructura LONG)
     ema89_prev = df_4h["close"].ewm(span=89, adjust=False).mean().iloc[-5]
 
-    # LONG: EMA21 > EMA89 + ambas subiendo + RSI 45-68
-    if t == "alcista":
-        if ema21_v <= ema89_v:
-            log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin estructura alcista 4H)")
-            return
-        if ema89_v <= ema89_prev:
-            log.info(f"{simbolo} — RECHAZADO: EMA89 no esta subiendo (tendencia debil)")
-            return
-        if rsi < 45 or rsi > 65:
-            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango LONG (45-65)")
-            return
+    # ── MOMENTUM FILTER — BTC ±2% en 1H ──────────────────────────────────────
+    modo_momentum = False
+    btc_mov_pct = 0.0
+    try:
+        df_btc = velas("XBTUSDTM", "60", 5)
+        if not df_btc.empty and len(df_btc) >= 2:
+            btc_c0 = float(df_btc["close"].iloc[-1])
+            btc_c1 = float(df_btc["close"].iloc[-2])
+            btc_mov_pct = (btc_c0 - btc_c1) / btc_c1
+            if abs(btc_mov_pct) >= 0.02:
+                modo_momentum = True
+                log.info(f"{simbolo} — MOMENTUM ACTIVO: BTC movió {btc_mov_pct*100:.1f}% en 1H → filtros relajados")
+    except Exception as e:
+        log.warning(f"Momentum BTC error: {e}")
 
-    # SHORT: EMA21 < EMA89 + EMA89 bajando + RSI 32-75
+    # LONG: EMA21 > EMA89 + ambas subiendo + RSI 45-65 (o modo momentum: 30-80)
+    if t == "alcista":
+        if modo_momentum:
+            # EMAs más flexibles (0.3% tolerancia) + RSI ampliado
+            if ema21_v <= ema89_v * 0.997:
+                log.info(f"{simbolo} — RECHAZADO: EMA21 muy por debajo de EMA89 (momentum)")
+                return
+            if ema21_v <= ema21.iloc[-3]:
+                log.info(f"{simbolo} — RECHAZADO: EMA21 no sube (momentum)")
+                return
+            if rsi < 30 or rsi > 80:
+                log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango LONG momentum (30-80)")
+                return
+            # Dirección BTC debe coincidir con la señal
+            if btc_mov_pct < 0:
+                log.info(f"{simbolo} — RECHAZADO: LONG pero BTC bajó en momentum")
+                return
+        else:
+            if ema21_v <= ema89_v:
+                log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin estructura alcista 4H)")
+                return
+            if ema89_v <= ema89_prev:
+                log.info(f"{simbolo} — RECHAZADO: EMA89 no esta subiendo (tendencia debil)")
+                return
+            if rsi < 45 or rsi > 65:
+                log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango LONG (45-65)")
+                return
+
+    # SHORT: EMA21 < EMA89 + EMA89 bajando + RSI 32-75 (o modo momentum: 20-70)
     elif t == "bajista":
         if simbolo in PARES_SOLO_LONG:
             log.info(f"{simbolo} — RECHAZADO: par en lista SOLO_LONG, no se opera SHORT")
             return
-        if ema21_v >= ema89_v:
-            log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin estructura bajista 4H)")
-            return
-        if ema89_v >= ema89_prev:
-            log.info(f"{simbolo} — RECHAZADO: EMA89 no esta bajando (tendencia debil)")
-            return
-        if rsi > 75 or rsi < 32:
-            log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT (32-75)")
-            return
+        if modo_momentum:
+            if ema21_v >= ema89_v * 1.003:
+                log.info(f"{simbolo} — RECHAZADO: EMA21 muy por encima de EMA89 (momentum)")
+                return
+            if ema21_v >= ema21.iloc[-3]:
+                log.info(f"{simbolo} — RECHAZADO: EMA21 no baja (momentum)")
+                return
+            if rsi > 70 or rsi < 20:
+                log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT momentum (20-70)")
+                return
+            if btc_mov_pct > 0:
+                log.info(f"{simbolo} — RECHAZADO: SHORT pero BTC subió en momentum")
+                return
+        else:
+            if ema21_v >= ema89_v:
+                log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin estructura bajista 4H)")
+                return
+            if ema89_v >= ema89_prev:
+                log.info(f"{simbolo} — RECHAZADO: EMA89 no esta bajando (tendencia debil)")
+                return
+            if rsi > 75 or rsi < 32:
+                log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT (32-75)")
+                return
 
     # Filtro ATR minimo 4H
     atr = calcular_atr(df_4h)
