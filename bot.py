@@ -1537,6 +1537,21 @@ def _cerrar_posicion(p: dict, pc: float):
     tp_ok = (p["dir"] == "LONG" and pc >= p["tp"]) or (p["dir"] == "SHORT" and pc <= p["tp"])
     sl_ok = (p["dir"] == "LONG" and pc <= p["sl"]) or (p["dir"] == "SHORT" and pc >= p["sl"])
 
+    # ── SALIDA ANTICIPADA: cae -4% en primeros 30 min ────────────────────────
+    if not sl_ok and not tp_ok and not p.get("tp1_hit", False):
+        try:
+            ts_entrada = datetime.fromisoformat(p.get("ts", datetime.now().isoformat()))
+            minutos_abierta = (datetime.now() - ts_entrada).total_seconds() / 60
+            if minutos_abierta <= 30:
+                perdida_rapida = (p["entrada"] - pc) / p["entrada"] if p["dir"] == "LONG" \
+                                 else (pc - p["entrada"]) / p["entrada"]
+                if perdida_rapida >= 0.04:
+                    log.warning(f"{p['simbolo']} SALIDA ANTICIPADA: -{perdida_rapida*100:.1f}% en {minutos_abierta:.0f} min — mercado fuertemente en contra")
+                    tg(f"⚡ SALIDA ANTICIPADA {p['simbolo']} {p['dir']}\n-{perdida_rapida*100:.1f}% en {minutos_abierta:.0f} min\nSalida antes de SL completo (-7%)")
+                    sl_ok = True
+        except Exception as e:
+            log.warning(f"Salida anticipada error: {e}")
+
     # ── Trailing stop dinamico por retroceso desde maximo/minimo ─────────────
     if not sl_ok and not tp_ok:
         with lock:
