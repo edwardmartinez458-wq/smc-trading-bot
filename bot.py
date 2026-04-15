@@ -2296,11 +2296,13 @@ def verificar_inicio():
         log.critical(f"Errores de inicio: {errores}")
         raise SystemExit(1)
 
-    tg(f"SMC BOT v13 INICIADO\n\n"
+    tg(f"🤖 SMC BOT KuCoin INICIADO\n\n"
        f"Pares: {len(pares_ok)} | Capital: ${estado['capital']:.2f} USDT\n"
-       f"x{estado['apalancamiento']} | TP: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}%\n"
-       f"Capital dinamico: 30/45/60% segun confianza IA\n"
-       f"Trailing stop: activa desde +15%\n"
+       f"x{estado['apalancamiento']} | TP1: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}%\n"
+       f"Margen fijo: 15% por posicion\n"
+       f"Trailing ATR: activa en TP1 (excepto INJ y AVAX)\n"
+       f"Salida anticipada: -4% en primeros 30 min\n"
+       f"Modo observacion: {CICLOS_OBSERVACION} ciclos al iniciar\n"
        f"SL diario: {SL_DIARIO_PCT*100:.0f}% | Max posiciones: {MAX_POSICIONES}\n"
        f"Ciclo: 5-15 min | Horario: 24/7\n\n"
        f"{', '.join(pares_ok)}\n\nActivo 24/7 en Railway")
