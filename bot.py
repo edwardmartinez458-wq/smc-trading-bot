@@ -112,6 +112,7 @@ estado = {
     "tendencia_btc":     "lateral",  # Para filtro tendencia mayor
     "ciclo":             0,
     "sl_diario_activo":  False,
+    "historial_pnl":     [],  # Ultimos 7 dias de PnL
 }
 lock = threading.Lock()
 
@@ -160,13 +161,20 @@ def en_horario_operacion() -> bool:
     return True  # Opera 24/7
 
 def reset_sl_diario():
-    """Resetea el capital de inicio del dia cada medianoche"""
+    """Resetea el capital de inicio del dia cada medianoche y guarda historial"""
     while True:
         ahora = datetime.now()
-        # Esperar hasta medianoche
         segundos = (24 - ahora.hour) * 3600 - ahora.minute * 60 - ahora.second
         time.sleep(segundos)
         with lock:
+            pnl_dia = estado["capital"] - estado["capital_inicio_dia"]
+            estado["historial_pnl"].append({
+                "fecha": datetime.now().strftime("%d/%m"),
+                "pnl":   round(pnl_dia, 2),
+                "capital_fin": round(estado["capital"], 2),
+            })
+            if len(estado["historial_pnl"]) > 7:
+                estado["historial_pnl"].pop(0)
             estado["capital_inicio_dia"] = estado["capital"]
             estado["sl_diario_activo"]   = False
         log.info(f"SL diario reseteado — Capital inicio dia: ${estado['capital']:.2f}")
@@ -2106,32 +2114,42 @@ def _enviar_reporte():
         lev       = estado["apalancamiento"]
         cb        = estado["circuit_breaker"]
         pos       = list(estado["posiciones"])
-        trump_t   = estado["ultimo_trump_texto"]
-        trump_d   = estado["trump_direccion"]
         t_btc     = estado["tendencia_btc"]
+        historial = list(estado["historial_pnl"])
 
-    wr       = ops_g / ops_t * 100 if ops_t else 0
-    g        = cap - cap_ini
-    pct      = g / cap_ini * 100 if cap_ini else 0
-    g_dia    = cap - cap_dia
-    pct_dia  = g_dia / cap_dia * 100 if cap_dia else 0
-    pos_txt  = "\n".join(
+    wr      = ops_g / ops_t * 100 if ops_t else 0
+    g       = cap - cap_ini
+    pct     = g / cap_ini * 100 if cap_ini else 0
+    g_dia   = cap - cap_dia
+    pct_dia = g_dia / cap_dia * 100 if cap_dia else 0
+
+    # Comparacion con ayer
+    ayer_txt = ""
+    if historial:
+        ayer = historial[-1]
+        diff = g_dia - ayer["pnl"]
+        ayer_txt = f"Ayer: {'+' if ayer['pnl'] >= 0 else ''}{ayer['pnl']:.2f} | Hoy vs ayer: {'+' if diff >= 0 else ''}{diff:.2f}\n"
+
+    # Historial 7 dias
+    hist_txt = ""
+    if historial:
+        lineas = [f"  {d['fecha']}: {'+' if d['pnl'] >= 0 else ''}{d['pnl']:.2f}" for d in historial]
+        pnl_semana = sum(d["pnl"] for d in historial)
+        hist_txt = f"\nUltimos {len(historial)} dias:\n" + "\n".join(lineas) + f"\n  TOTAL semana: {'+' if pnl_semana >= 0 else ''}{pnl_semana:.2f}"
+
+    pos_txt = "\n".join(
         f"  {p['simbolo']} {p['dir']} @ ${p['entrada']:.4f}" for p in pos
     ) or "  Ninguna"
-    trump_txt = f"\nTrump: {trump_d} — {trump_t[:80]}..." if trump_t else ""
 
-    horario_ok = en_horario_operacion()
-
-    tg(f"REPORTE {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-       f"Capital inicial: ${cap_ini:.2f}\n"
-       f"Capital actual:  ${cap:.2f}\n"
+    tg(f"📊 REPORTE {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+       f"Capital actual:  ${cap:.2f} USDT\n"
        f"Hoy: {'+' if g_dia >= 0 else ''}{g_dia:.2f} ({'+' if pct_dia >= 0 else ''}{pct_dia:.1f}%)\n"
-       f"Total: {'+' if g >= 0 else ''}{g:.2f} ({'+' if pct >= 0 else ''}{pct:.1f}%)\n"
+       f"{ayer_txt}"
+       f"Total desde inicio: {'+' if g >= 0 else ''}{g:.2f} ({'+' if pct >= 0 else ''}{pct:.1f}%)\n"
        f"Win Rate: {wr:.0f}% ({ops_g}/{ops_t} ops)\n"
-       f"x{lev} | CB: {'ACTIVO' if cb else 'Normal'}\n"
-       f"BTC: {t_btc.upper()} | Horario: {'OK' if horario_ok else 'DESCANSO'}\n\n"
+       f"BTC: {t_btc.upper()} | CB: {'ACTIVO' if cb else 'Normal'}\n\n"
        f"Posiciones abiertas:\n{pos_txt}"
-       f"{trump_txt}\n\n"
+       f"{hist_txt}\n\n"
        f"Exchange: KuCoin Futuros")
 
 # ─── VERIFICACION INICIAL ─────────────────────────────────────────────────────
