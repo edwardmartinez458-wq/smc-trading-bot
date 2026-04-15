@@ -1996,8 +1996,14 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v, atr=atr)
 
 
+CICLOS_OBSERVACION = 3  # Ciclos de espera tras reinicio antes de entrar al mercado
+
 def analizar(simbolo: str):
     with lock:
+        # ── MODO OBSERVACION: esperar N ciclos tras reinicio ───────────────────
+        if estado["ciclo"] <= CICLOS_OBSERVACION:
+            log.info(f"{simbolo} — MODO OBSERVACION ciclo {estado['ciclo']}/{CICLOS_OBSERVACION} — sin entradas hasta completar")
+            return
         if estado["circuit_breaker"]:
             log.info(f"{simbolo} — bloqueado: circuit breaker activo")
             return
