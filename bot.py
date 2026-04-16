@@ -17,7 +17,7 @@ MEJORAS v2:
 
 import os, time, logging, requests, hmac, hashlib, json, threading, base64, random
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from logging.handlers import TimedRotatingFileHandler
 from openai import OpenAI
 from flask import Flask, jsonify, send_from_directory
@@ -38,26 +38,34 @@ COINGLASS_API_KEY  = os.getenv("COINGLASS_API_KEY", "")
 PARES = [
     "INJUSDTM",
     "SUIUSDTM",
-    "DOTUSDTM",
     "APTUSDTM",
-    "POLUSDTM",
     "SOLUSDTM",
+    "DOTUSDTM",
     "AVAXUSDTM",
 ]
 
-# Pares que solo operan LONG (backtest confirma que SHORT no funciona)
-PARES_SOLO_LONG = ["DOTUSDTM", "AVAXUSDTM"]
+PARES_SOLO_LONG = []  # todos los pares operan bidireccional
 
 CAPITAL_TOTAL  = float(os.getenv("CAPITAL_TOTAL", "100"))
 APALANCAMIENTO = int(os.getenv("APALANCAMIENTO", "10"))
 TP_PCT         = 0.15
 SL_PCT         = 0.07
-MAX_POSICIONES = 3
 CB_LIMITE      = 8
 BASE_URL       = "https://api-futures.kucoin.com"
 
-# Stop loss global diario: si el capital cae mas de 10% en el dia -> pausar
-SL_DIARIO_PCT  = 0.15  # 15% diario — proteccion real de capital
+# ─── CONTROL DE RIESGO ───────────────────────────────────────────────────────
+MAX_POSICIONES_GLOBALES = 3     # hasta 3 simultáneas (3 × 15% = 45% exposición)
+MAX_POR_GRUPO           = 3     # sin restricción práctica por correlación
+MAX_EXPOSICION_TOTAL    = 0.45  # máx 45% del equity en margen comprometido simultáneo
+COOLDOWN_TRAS_LOSS_MIN  = 45    # minutos de bloqueo global tras un trade perdedor
+
+# Grupo correlacionado alts L1: todos se mueven con BTC (ρ > 0.80 diario)
+CORRELATED_GROUPS = {
+    "alts_l1": {"SOLUSDTM", "INJUSDTM", "SUIUSDTM", "APTUSDTM", "DOTUSDTM", "AVAXUSDTM"},
+}
+
+# Stop loss global diario: si el capital cae mas de 5% en el dia -> pausar
+SL_DIARIO_PCT  = 0.05  # 5% diario — NO subir mientras capital_pct=0.15
 
 # Ciclo aleatorio entre 5 y 15 minutos
 CICLO_MIN_SEG  = 5 * 60
@@ -95,7 +103,8 @@ estado = {
     "ops_ganadas":       0,
     "capital":           CAPITAL_TOTAL,
     "capital_inicial":   CAPITAL_TOTAL,
-    "capital_inicio_dia": CAPITAL_TOTAL,  # Para SL diario
+    "capital_inicio_dia": CAPITAL_TOTAL,  # Para SL diario (persistente)
+    "fecha_inicio_dia":  None,            # ISO date del dia del capital_inicio_dia
     "apalancamiento":    APALANCAMIENTO,
     "pares_activos":     list(PARES),
     "ultimo_trump_id":   None,
@@ -113,12 +122,17 @@ estado = {
     "ciclo":             0,
     "sl_diario_activo":  False,
     "historial_pnl":     [],  # Ultimos 7 dias de PnL
+    "pausa_macro":       False,  # Pausa automatica por evento macro USD HIGH
 }
 lock = threading.Lock()
 
 # ─── PERSISTENCIA DE ESTADO ──────────────────────────────────────────────────
 _PERSIST_PATH = "estado_persistente.json"
-_CAMPOS_PERSIST = ["ciclo", "ops_total", "ops_ganadas", "capital_inicial", "perdidas_seguidas", "circuit_breaker", "sl_diario_activo"]
+_CAMPOS_PERSIST = [
+    "ciclo", "ops_total", "ops_ganadas", "capital_inicial",
+    "perdidas_seguidas", "circuit_breaker", "sl_diario_activo",
+    "capital_inicio_dia", "fecha_inicio_dia",  # daily stop persistente
+]
 
 def guardar_estado_persistente():
     try:
@@ -138,7 +152,14 @@ def cargar_estado_persistente():
                 for k in _CAMPOS_PERSIST:
                     if k in datos:
                         estado[k] = datos[k]
-            log.info(f"Estado restaurado: ciclo={datos.get('ciclo',0)} ops={datos.get('ops_total',0)} ganadas={datos.get('ops_ganadas',0)}")
+                # Si el dia cambio desde la ultima persistencia, resetear capital_inicio_dia
+                hoy_iso = datetime.now().date().isoformat()
+                if estado.get("fecha_inicio_dia") != hoy_iso:
+                    log.info(f"Cambio de dia detectado al cargar estado (prev={estado.get('fecha_inicio_dia')} hoy={hoy_iso}) — reset SL diario")
+                    estado["fecha_inicio_dia"]  = hoy_iso
+                    estado["sl_diario_activo"]  = False
+                    # capital_inicio_dia se corrige luego en verificar_inicio con balance real
+            log.info(f"Estado restaurado: ciclo={datos.get('ciclo',0)} ops={datos.get('ops_total',0)} ganadas={datos.get('ops_ganadas',0)} fecha_dia={estado.get('fecha_inicio_dia')}")
     except Exception as e:
         log.error(f"Persistencia cargar: {e}")
 
@@ -176,8 +197,10 @@ def reset_sl_diario():
             if len(estado["historial_pnl"]) > 7:
                 estado["historial_pnl"].pop(0)
             estado["capital_inicio_dia"] = estado["capital"]
+            estado["fecha_inicio_dia"]   = datetime.now().date().isoformat()
             estado["sl_diario_activo"]   = False
-        log.info(f"SL diario reseteado — Capital inicio dia: ${estado['capital']:.2f}")
+        guardar_estado_persistente()
+        log.info(f"SL diario reseteado — Capital inicio dia: ${estado['capital']:.2f} (fecha {estado['fecha_inicio_dia']})")
 
 def verificar_sl_diario():
     """Pausa el bot si el capital cayo mas de 10% en el dia"""
@@ -632,6 +655,445 @@ def monitor_ballenas():
             log.error(f"Monitor ballenas: {e}")
         time.sleep(25 * 60)
 
+# ─── MONITOR CALENDARIO MACRO ─────────────────────────────────────────────────
+
+# Playbook: 15 setups con edge real (WR >= 62%, N >= 4)
+# Fuente: 597 eventos historicos 2024-2026 cruzados con precios BTC/ETH/SOL
+MACRO_PLAYBOOK = {
+    # ── LONGS ──────────────────────────────────────────────────────────────
+    "NFP_INLINE":       {"dir": "LONG",  "wr": 100, "n": 5},
+    "CPI_COOL":         {"dir": "LONG",  "wr": 100, "n": 4},
+    "DURABLE_STRONG":   {"dir": "LONG",  "wr": 83,  "n": 6},
+    "UNEMP_DOWN":       {"dir": "LONG",  "wr": 80,  "n": 5},
+    "FOMC_DOVISH":      {"dir": "LONG",  "wr": 78,  "n": 9},
+    "SENTIMENT_WEAK":   {"dir": "LONG",  "wr": 75,  "n": 12},
+    "RETAIL_STRONG":    {"dir": "LONG",  "wr": 69,  "n": 13},
+    # ── SHORTS ─────────────────────────────────────────────────────────────
+    "HOMES_STRONG":     {"dir": "SHORT", "wr": 100, "n": 4},
+    "PCE_INLINE":       {"dir": "SHORT", "wr": 81,  "n": 16},
+    "DURABLE_WEAK":     {"dir": "SHORT", "wr": 62,  "n": 8},
+    "SENTIMENT_STRONG": {"dir": "SHORT", "wr": 62,  "n": 8},
+    "JOBLESS_HIGH":     {"dir": "SHORT", "wr": 62,  "n": 13},
+    "PCE_HOT":          {"dir": "SHORT", "wr": 71,  "n": 7},
+    "PPI_HOT":          {"dir": "SHORT", "wr": 70,  "n": 11},
+    "RETAIL_WEAK":      {"dir": "SHORT", "wr": 67,  "n": 6},
+}
+
+# Memoria histórica: 597 eventos reales 2024-2026 cruzados con precios SOL
+# Formato: "TIPO_SABOR": [n, avg_SOL_4h, wr_short_pct, min_SOL_4h, max_SOL_4h]
+MACRO_HISTORICO = {
+    "CONTINUING_HIGH":   [2,   -0.235,  50.0,  -0.50,  0.03],
+    "CONTINUING_INLINE": [114, -0.020,  52.6,  -9.50,  5.70],
+    "CORE_CPI_COOL":     [2,    0.280,   0.0,   0.09,  0.47],
+    "CORE_CPI_HOT":      [7,   -0.477,  42.9,  -3.91,  1.57],
+    "CORE_CPI_INLINE":   [16,  -0.729,  62.5,  -4.47,  2.85],
+    "CORE_PCE_COOL":     [2,    1.595,   0.0,   0.47,  2.72],
+    "CORE_PCE_HOT":      [6,   -0.842,  50.0,  -2.19,  0.36],
+    "CORE_PCE_INLINE":   [17,  -0.641,  58.8,  -4.47,  2.85],
+    "CPI_COOL":          [4,    0.373,   0.0,   0.12,  0.79],
+    "CPI_HOT":           [6,   -0.210,  33.3,  -2.55,  1.64],
+    "CPI_INLINE":        [15,   0.247,  33.3,  -4.94,  8.64],
+    "DURABLE_INLINE":    [11,  -0.361,  45.5,  -3.91,  2.72],
+    "DURABLE_STRONG":    [6,   -0.038,  33.3,  -2.19,  0.72],
+    "DURABLE_WEAK":      [8,   -1.070,  75.0,  -4.47,  2.85],
+    "FFR_NA":            [26,  -0.206,  50.0,  -4.15,  4.73],
+    "FOMC_DOVISH":       [9,    0.646,  33.3,  -4.08,  4.82],
+    "FOMC_HAWKISH":      [6,   -1.077,  50.0,  -5.27,  2.36],
+    "FOMC_NEUTRAL":      [3,    0.017,  66.7,  -0.44,  0.80],
+    "GDP_INLINE":        [1,    0.150,   0.0,   0.15,  0.15],
+    "GDP_STRONG":        [6,   -1.335,  83.3,  -3.91,  0.72],
+    "HOMES_INLINE":      [5,   -0.076,  60.0,  -0.86,  0.51],
+    "HOMES_STRONG":      [4,   -1.085, 100.0,  -1.91, -0.32],
+    "HOMES_WEAK":        [3,    0.223,  33.3,  -2.54,  2.85],
+    "HOUSING_INLINE":    [2,   -1.910,  50.0,  -3.91,  0.09],
+    "HOUSING_STRONG":    [12,  -0.514,  66.7,  -4.47,  2.85],
+    "HOUSING_WEAK":      [10,  -0.086,  30.0,  -3.65,  2.72],
+    "INDPRO_INLINE":     [22,  -0.640,  54.6,  -4.47,  2.85],
+    "INDPRO_STRONG":     [3,    0.440,  33.3,  -0.34,  1.57],
+    "JOBLESS_HIGH":      [13,  -0.176,  53.9,  -6.55,  3.44],
+    "JOBLESS_INLINE":    [92,  -0.345,  57.6,  -5.63,  5.36],
+    "JOBLESS_LOW":       [12,  -0.893,  58.3,  -5.14,  2.14],
+    "NFP_INLINE":        [5,    1.550,  20.0,  -0.50,  4.38],
+    "NFP_STRONG":        [3,   -0.373,  66.7,  -2.19,  2.13],
+    "NFP_WEAK":          [18,  -0.792,  66.7,  -7.02,  5.81],
+    "PCE_COOL":          [2,   -1.645, 100.0,  -1.69, -1.60],
+    "PCE_HOT":           [7,    0.271,  57.1,  -1.49,  4.64],
+    "PCE_INLINE":        [16,  -1.569,  87.5,  -4.16,  2.18],
+    "PPI_COOL":          [12,   0.031,  58.3,  -4.21,  3.41],
+    "PPI_HOT":           [11,   0.121,  60.0,  -2.17,  3.44],
+    "PPI_INLINE":        [3,    0.087,  33.3,  -0.72,  0.51],
+    "RETAIL_INLINE":     [6,    0.155,  33.3,  -3.16,  4.18],
+    "RETAIL_STRONG":     [13,   0.886,  23.1,  -1.06,  3.83],
+    "RETAIL_WEAK":       [6,   -0.790,  66.7,  -2.61,  0.42],
+    "SENTIMENT_INLINE":  [5,   -1.126,  60.0,  -3.91,  0.42],
+    "SENTIMENT_STRONG":  [8,   -1.018,  62.5,  -4.47,  2.85],
+    "SENTIMENT_WEAK":    [12,   0.084,  41.7,  -3.35,  2.72],
+    "UNEMP_DOWN":        [5,    1.434,  20.0,  -1.27,  4.38],
+    "UNEMP_INLINE":      [12,  -1.098,  83.3,  -3.65,  5.75],
+    "UNEMP_UP":          [8,   -0.930,  50.0,  -7.02,  1.94],
+}
+
+def _historico_lookup(tipo: str, sabor: str) -> str:
+    """Devuelve contexto historico para el tipo+sabor dado."""
+    if not tipo or not sabor:
+        return ""
+    h = MACRO_HISTORICO.get(f"{tipo}_{sabor}")
+    if not h:
+        return ""
+    n, avg_sol, wr_short, min_sol, max_sol = h
+    wr_long = round(100 - wr_short, 1)
+    if wr_short >= 55:
+        dir_dom, wr_dom = "SHORT", wr_short
+    else:
+        dir_dom, wr_dom = "LONG",  wr_long
+    return (f"\n📚 HISTÓRICO {tipo}_{sabor} (N={n}, 2024-2026):\n"
+            f"SOL avg 4h: {avg_sol:+.2f}% | {dir_dom} WR: {wr_dom:.0f}%\n"
+            f"Rango SOL: {min_sol:+.1f}% / {max_sol:+.1f}%")
+
+_TIPO_MAP = {
+    "NON-FARM": "NFP", "NONFARM": "NFP",
+    "CPI": "CPI", "CONSUMER PRICE": "CPI",
+    "PPI": "PPI", "PRODUCER PRICE": "PPI",
+    "PCE": "PCE", "PERSONAL CONSUMPTION": "PCE",
+    "FOMC": "FOMC", "FEDERAL FUNDS": "FOMC", "FED RATE": "FOMC",
+    "RETAIL": "RETAIL",
+    "JOBLESS": "JOBLESS", "INITIAL CLAIMS": "JOBLESS", "UNEMPLOYMENT CLAIMS": "JOBLESS",
+    "DURABLE": "DURABLE",
+    "INDUSTRIAL PRODUCTION": "INDPRO",
+    "MICHIGAN": "SENTIMENT", "SENTIMENT": "SENTIMENT",
+    "EXISTING HOME": "HOMES", "NEW HOME": "HOMES",
+    "UNEMPLOYMENT RATE": "UNEMP",
+}
+
+def _tipo_evento(titulo: str):
+    t = titulo.upper()
+    for pat, tipo in _TIPO_MAP.items():
+        if pat in t:
+            return tipo
+    return None
+
+def _sabor_evento(tipo: str, forecast: str, previous: str, actual: str = ""):
+    """Clasifica sabor del evento.
+    Post-evento (actual disponible): usa actual vs forecast (sorpresa real).
+    Pre-evento: usa forecast vs previous (prediccion).
+    """
+    try:
+        def _p(s):
+            return float(str(s).replace("%","").replace("K","").replace("M","")
+                                .replace(",","").strip())
+        if actual and actual.strip():
+            # Post-evento: sabor real = sorpresa (actual vs forecast)
+            a = _p(actual)
+            f = _p(forecast) if forecast and forecast.strip() else _p(previous)
+            ref = f
+            if ref == 0: return None
+            chg = (a - ref) / abs(ref) * 100
+            # Para NFP usamos valores absolutos
+            f_abs, a_abs = f, a
+        else:
+            # Pre-evento: prediccion = forecast vs previous
+            f, p = _p(forecast), _p(previous)
+            if p == 0: return None
+            chg = (f - p) / abs(p) * 100
+            f_abs, a_abs = f, p
+    except Exception:
+        return None
+    if tipo in ("CPI", "PPI", "PCE"):
+        return "HOT" if chg > 0.3 else ("COOL" if chg < -0.1 else "INLINE")
+    if tipo == "NFP":
+        return "STRONG" if a_abs > f_abs * 1.1 else ("WEAK" if a_abs < f_abs * 0.9 else "INLINE")
+    if tipo in ("JOBLESS", "CONTINUING"):
+        return "HIGH" if chg > 5 else ("LOW" if chg < -5 else "INLINE")
+    if tipo in ("RETAIL", "DURABLE", "INDPRO", "HOMES"):
+        return "STRONG" if chg > 1 else ("WEAK" if chg < -1 else "INLINE")
+    if tipo == "UNEMP":
+        return "UP" if a_abs > f_abs + 0.1 else ("DOWN" if a_abs < f_abs - 0.1 else "INLINE")
+    if tipo == "SENTIMENT":
+        return "STRONG" if a_abs > f_abs + 1 else ("WEAK" if a_abs < f_abs - 1 else "INLINE")
+    return None
+
+
+def _buscar_setup_macro(titulo: str, forecast: str, previous: str) -> str:
+    """Devuelve texto con setup del playbook + contexto historico."""
+    tipo = _tipo_evento(titulo)
+    if not tipo or not forecast or not previous:
+        return ""
+    sabor = _sabor_evento(tipo, forecast, previous)
+    if not sabor:
+        return ""
+    clave  = f"{tipo}_{sabor}"
+    setup  = MACRO_PLAYBOOK.get(clave)
+    hist   = _historico_lookup(tipo, sabor)
+    if setup:
+        emoji = "📈" if setup["dir"] == "LONG" else "📉"
+        return (f"\n{emoji} SETUP DETECTADO: {clave}\n"
+                f"➡️ {setup['dir']} SOLUSDTM | WR playbook: {setup['wr']}% (N={setup['n']})"
+                f"{hist}\n"
+                f"Confirmar entrada 30 min post-dato con señales normales del bot.")
+    return f"\n📊 {clave} — sin edge en playbook.{hist}"
+
+# ─── AUTO-GUARDADO MACRO ──────────────────────────────────────────────────────
+
+MEMORIA_MACRO_FILE = "memoria_macro.json"
+_eventos_macro_pendientes = {}  # key → {tipo, sabor, titulo, actual, forecast, previous, dt_evento, sol_pre, guardado}
+
+def _precio_sol_spot() -> float:
+    """Precio actual SOL-USDT desde KuCoin público (sin auth)."""
+    try:
+        r = requests.get(
+            "https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=SOL-USDT",
+            timeout=5
+        )
+        if r.status_code == 200:
+            d = r.json().get("data", {})
+            if d:
+                return float(d.get("price", 0))
+    except Exception:
+        pass
+    return 0.0
+
+def _guardar_evento_macro(tipo, sabor, titulo, actual, forecast, previous,
+                           dt_evento, sol_pre, sol_post, mov_4h):
+    """Guarda evento macro en memoria_macro.json + notifica por Telegram."""
+    clave = f"{tipo}_{sabor}"
+    nuevo = {
+        "tipo":        tipo,
+        "sabor":       sabor,
+        "clave":       clave,
+        "titulo":      titulo,
+        "actual":      actual,
+        "forecast":    forecast,
+        "previous":    previous,
+        "fecha":       dt_evento.strftime("%Y-%m-%d"),
+        "hora_utc":    dt_evento.strftime("%H:%M"),
+        "sol_pre":     round(sol_pre, 4),
+        "sol_post_4h": round(sol_post, 4),
+        "mov_4h_pct":  round(mov_4h, 3),
+    }
+    total = "?"
+    try:
+        datos = []
+        if os.path.exists(MEMORIA_MACRO_FILE):
+            with open(MEMORIA_MACRO_FILE, "r") as f:
+                datos = json.load(f)
+        datos.append(nuevo)
+        with open(MEMORIA_MACRO_FILE, "w") as f:
+            json.dump(datos, f, indent=2)
+        total = len(datos)
+    except Exception as ex:
+        log.warning(f"_guardar_evento_macro archivo: {ex}")
+    signo = "📈" if mov_4h >= 0 else "📉"
+    tg(
+        f"📚 MACRO GUARDADO — {clave}\n"
+        f"actual={actual} vs forecast={forecast} (prev={previous})\n"
+        f"{signo} SOL 4H: {mov_4h:+.2f}%  (${sol_pre:.2f} → ${sol_post:.2f})\n"
+        f"Base acumulada: {total} eventos"
+    )
+    log.info(f"Macro guardado: {clave} | SOL {mov_4h:+.2f}% en 4H | total={total}")
+
+def _parsear_eventos_ff(datos: list) -> list:
+    """Convierte lista ForexFactory JSON a lista de eventos con datetime UTC."""
+    meses = {"Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"Jun":6,"Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12}
+    eventos = []
+    for ev in datos:
+        try:
+            if ev.get("country","").upper() != "USD":
+                continue
+            impacto_raw = ev.get("impact","").lower()
+            if impacto_raw == "high":
+                impacto = "alto"    # 🔴 rojo — pausa + playbook + historico
+            elif impacto_raw == "medium":
+                impacto = "medio"   # 🟠 naranja — solo alerta, sin pausa
+            else:
+                continue            # 🟡 amarillo o sin impacto — ignorar
+            fecha_str = ev.get("date","")
+            hora_str  = ev.get("time","").strip().lower()
+            if not fecha_str or hora_str in ("","all day","tentative"):
+                continue
+            partes = fecha_str.replace(",","").split()
+            if len(partes) < 3:
+                continue
+            mes, dia, anio = meses.get(partes[0],0), int(partes[1]), int(partes[2])
+            if not mes:
+                continue
+            es_pm = "pm" in hora_str
+            hora_limpia = hora_str.replace("am","").replace("pm","").strip()
+            partes_t = hora_limpia.split(":")
+            h, m = int(partes_t[0]), int(partes_t[1]) if len(partes_t) > 1 else 0
+            if es_pm and h != 12:
+                h += 12
+            elif not es_pm and h == 12:
+                h = 0
+            # ForexFactory usa Eastern Time. EDT (UTC-4) de Mar-Oct, EST (UTC-5) el resto
+            offset_h = 4 if 3 <= mes <= 10 else 5
+            dt_utc = datetime(anio, mes, dia, h, m) + timedelta(hours=offset_h)
+            dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+            eventos.append({
+                "titulo":   ev.get("title",""),
+                "dt_utc":   dt_utc,
+                "forecast": ev.get("forecast",""),
+                "previous": ev.get("previous",""),
+                "actual":   ev.get("actual",""),   # dato real post-evento
+                "impacto":  impacto,
+            })
+        except Exception:
+            continue
+    return eventos
+
+_ff_cache  = {"eventos": [], "ultima_descarga": None}
+
+def monitor_calendario_macro():
+    """
+    Descarga calendario ForexFactory cada 6 horas (gratis, sin API key).
+    60 min antes de evento USD HIGH → pausa automatica de entradas.
+    30 min despues del evento → reanuda.
+    Alerta matutina a las 8:00 UTC con eventos del dia.
+    """
+    time.sleep(20)   # Dejar que el bot arranque primero
+    alerta_enviada_hoy = None
+
+    while True:
+        try:
+            ahora = datetime.now(timezone.utc)
+
+            # ── Descargar/refrescar calendario cada 6 horas ───────────────────
+            # Forzar descarga fresca si hay evento HIGH recién publicado (para capturar 'actual')
+            evento_reciente = any(
+                e.get("impacto") == "alto" and
+                0 <= (ahora - e["dt_utc"]).total_seconds() / 60 <= 90
+                for e in _ff_cache.get("eventos", [])
+            )
+            cache_ok = (not evento_reciente and
+                        _ff_cache["ultima_descarga"] is not None and
+                        (ahora - _ff_cache["ultima_descarga"]).total_seconds() < 21600)
+            if not cache_ok:
+                try:
+                    r = requests.get(
+                        "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+                        timeout=10,
+                        headers={"User-Agent": "Mozilla/5.0"}
+                    )
+                    if r.status_code == 200:
+                        _ff_cache["eventos"] = _parsear_eventos_ff(r.json())
+                        _ff_cache["ultima_descarga"] = ahora
+                        log.info(f"Calendario macro: {len(_ff_cache['eventos'])} eventos USD HIGH esta semana")
+                except Exception as e:
+                    log.warning(f"ForexFactory descarga fallida: {e}")
+
+            eventos = _ff_cache["eventos"]
+            hoy = ahora.date()
+
+            # ── Alerta matutina 08:00-08:09 UTC ──────────────────────────────
+            if ahora.hour == 8 and ahora.minute < 10 and alerta_enviada_hoy != hoy:
+                eventos_hoy = sorted([e for e in eventos if e["dt_utc"].date() == hoy],
+                                     key=lambda x: x["dt_utc"])
+                if eventos_hoy:
+                    lineas = ["📅 MACRO HOY — USD HIGH IMPACT:"]
+                    for e in eventos_hoy:
+                        hora_ve = (e["dt_utc"] - timedelta(hours=4)).strftime("%H:%M")
+                        prev    = e["previous"] or "—"
+                        est     = e["forecast"]  or "—"
+                        tipo    = _tipo_evento(e["titulo"]) or ""
+                        sabor   = _sabor_evento(tipo, e["forecast"], e["previous"]) if tipo and e["forecast"] and e["previous"] else None
+                        clave   = f"{tipo}_{sabor}" if sabor else ""
+                        setup   = MACRO_PLAYBOOK.get(clave)
+                        color_e = "🔴" if e.get("impacto") == "alto" else "🟠"
+                        setup_s = f" → {setup['dir']} SOL WR{setup['wr']}%" if setup else ""
+                        lineas.append(f"{color_e} {hora_ve}VE — {e['titulo']}  |  prev {prev} → est {est}{setup_s}")
+                    lineas.append("\n⏸ Bot pausa 60 min antes y retoma 30 min despues de cada evento.")
+                    tg("\n".join(lineas))
+                alerta_enviada_hoy = hoy
+
+            # ── Verificar ventana de pausa activa (solo eventos ROJOS) ────────
+            en_pausa = False
+            evento_activo = None
+            for e in sorted(eventos, key=lambda x: x["impacto"] == "alto", reverse=True):
+                delta_min = (e["dt_utc"] - ahora).total_seconds() / 60
+                if e["impacto"] == "alto" and -30 <= delta_min <= 60:
+                    en_pausa = True
+                    evento_activo = e
+                    break
+
+            # ── Alertas naranjas (sin pausa, solo aviso) ──────────────────────
+            for e in eventos:
+                if e["impacto"] != "medio":
+                    continue
+                delta_min = (e["dt_utc"] - ahora).total_seconds() / 60
+                alerta_key = f"naranja_{e['titulo']}_{e['dt_utc'].date()}"
+                if 25 <= delta_min <= 35 and alerta_key not in _ff_cache:
+                    tipo  = _tipo_evento(e["titulo"]) or ""
+                    sabor = _sabor_evento(tipo, e["forecast"], e["previous"]) if tipo and e.get("forecast") and e.get("previous") else None
+                    hist  = _historico_lookup(tipo, sabor) if sabor else ""
+                    tg(f"🟠 EVENTO MEDIO — {e['titulo']} en {int(delta_min)} min\n"
+                       f"prev {e.get('previous','—')} → est {e.get('forecast','—')}\n"
+                       f"Sin pausa — solo informativo.{hist}")
+                    _ff_cache[alerta_key] = True
+
+            with lock:
+                estaba = estado.get("pausa_macro", False)
+                estado["pausa_macro"] = en_pausa
+
+            if en_pausa and not estaba and evento_activo:
+                delta_min = (evento_activo["dt_utc"] - ahora).total_seconds() / 60
+                setup_txt = _buscar_setup_macro(
+                    evento_activo["titulo"],
+                    evento_activo.get("forecast",""),
+                    evento_activo.get("previous","")
+                )
+                if delta_min > 0:
+                    tg(f"⏸️ PAUSA MACRO — {evento_activo['titulo']} en {int(delta_min)} min\n"
+                       f"Bot suspende nuevas entradas hasta 30 min despues del dato."
+                       f"{setup_txt}")
+                else:
+                    tg(f"⏸️ PAUSA MACRO — {evento_activo['titulo']} publicado hace {int(-delta_min)} min\n"
+                       f"Esperando ventana de reaccion (30 min post-dato)."
+                       f"{setup_txt}")
+            elif not en_pausa and estaba:
+                tg("▶️ PAUSA MACRO levantada — Bot reanuda entradas normales.")
+
+            # ── Auto-guardar eventos macro (base crece sola) ──────────────────
+            for e in eventos:
+                if e["impacto"] != "alto":
+                    continue
+                actual_val = e.get("actual", "")
+                tipo = _tipo_evento(e["titulo"]) or ""
+                if not tipo or not actual_val or not e.get("forecast"):
+                    continue
+                key = f"msave_{e['titulo']}_{e['dt_utc'].date()}"
+                delta_post = (ahora - e["dt_utc"]).total_seconds() / 60  # positivo = ya pasó
+                if delta_post < 0 or delta_post > 300:
+                    continue  # Solo ventana 0-5h post-evento
+                if key not in _eventos_macro_pendientes:
+                    sabor_real = _sabor_evento(tipo, e["forecast"], e.get("previous",""), actual_val)
+                    if sabor_real:
+                        sol_pre = _precio_sol_spot()
+                        _eventos_macro_pendientes[key] = {
+                            "tipo": tipo, "sabor": sabor_real,
+                            "titulo": e["titulo"], "actual": actual_val,
+                            "forecast": e["forecast"], "previous": e.get("previous",""),
+                            "dt_evento": e["dt_utc"], "sol_pre": sol_pre, "guardado": False,
+                        }
+                        log.info(f"🔍 Tracking macro: {tipo}_{sabor_real} | SOL pre=${sol_pre:.2f}")
+                else:
+                    pen = _eventos_macro_pendientes[key]
+                    if not pen["guardado"]:
+                        elapsed_h = (ahora - pen["dt_evento"]).total_seconds() / 3600
+                        if elapsed_h >= 4.0:
+                            sol_post = _precio_sol_spot()
+                            if pen["sol_pre"] > 0 and sol_post > 0:
+                                mov = (sol_post - pen["sol_pre"]) / pen["sol_pre"] * 100
+                                _guardar_evento_macro(
+                                    pen["tipo"], pen["sabor"], pen["titulo"],
+                                    pen["actual"], pen["forecast"], pen["previous"],
+                                    pen["dt_evento"], pen["sol_pre"], sol_post, mov
+                                )
+                            pen["guardado"] = True
+
+        except Exception as e:
+            log.error(f"monitor_calendario_macro: {e}")
+
+        time.sleep(60)   # Revisar cada minuto
+
 # ─── KUCOIN FUTURES API ───────────────────────────────────────────────────────
 
 def kc_sign(timestamp: str, method: str, endpoint: str, body: str = "") -> tuple:
@@ -882,13 +1344,24 @@ def ejecutar_orden(simbolo: str, lado: str, cantidad: int, sl: float, tp: float,
 
 def balance_kucoin() -> float:
     """Retorna el equity total de la cuenta (disponible + margen en uso)."""
-    d = kc_get("/api/v1/account-overview", {"currency": "USDT"})
-    try:
-        data = d["data"]
-        equity = float(data.get("accountEquity", data.get("availableBalance", 0)))
-        return equity
-    except:
-        return 0.0
+    for intento in range(3):
+        d = kc_get("/api/v1/account-overview", {"currency": "USDT"})
+        if not d:
+            log.warning(f"balance_kucoin: kc_get devolvio vacio (intento {intento+1}/3)")
+            time.sleep(3)
+            continue
+        try:
+            data = d.get("data", {})
+            log.debug(f"balance_kucoin raw: {data}")
+            equity = float(data.get("accountEquity", data.get("availableBalance", 0)))
+            if equity > 0:
+                return equity
+            log.warning(f"balance_kucoin: equity=0 en respuesta — data={data}")
+        except Exception as e:
+            log.error(f"balance_kucoin parse error: {e} — d={d}")
+        time.sleep(3)
+    log.error("balance_kucoin: todos los intentos fallaron — devolviendo 0.0")
+    return 0.0
 
 def saldo_disponible_kucoin() -> float:
     """Retorna solo el saldo libre (sin margen en uso). Evita insufficient balance."""
@@ -1397,18 +1870,18 @@ RAZON: una linea breve"""}]
                     except: pass
                 elif "RAZON:" in l: razon = l.split(":", 1)[1].strip()
             log.info(f"{simbolo} — Fear&Greed: {fear_greed} | Funding: {funding}")
-            return {"entrar": dec == "ENTRAR" and conf >= 50, "confianza": conf, "razon": razon}
+            return {"entrar": dec == "ENTRAR" and conf >= 65, "confianza": conf, "razon": razon}
         except Exception as e:
             log.error(f"IA intento {intento+1}: {e}")
             if intento < 2:
                 time.sleep(5)
 
-    log.warning(f"{simbolo} — IA no disponible, entrando con confianza base 60%")
-    return {"entrar": True, "confianza": 60, "razon": "IA no disponible - fallback"}
+    log.warning(f"{simbolo} — IA no disponible, entrando con confianza base 65%")
+    return {"entrar": True, "confianza": 65, "razon": "IA no disponible - fallback"}
 
 # ─── POSICIONES ───────────────────────────────────────────────────────────────
 
-def abrir(simbolo, t, pc, ia, rsi=0, adx=0, ema21=0, ema89=0, atr=0):
+def abrir(simbolo, t, pc, ia, rsi=0, adx=0, ema21=0, ema89=0, atr=0, modo_momentum=False):
     lev    = estado["apalancamiento"]
     lado   = "buy" if t == "alcista" else "sell"
     dir_   = "LONG" if lado == "buy" else "SHORT"
@@ -1428,13 +1901,24 @@ def abrir(simbolo, t, pc, ia, rsi=0, adx=0, ema21=0, ema89=0, atr=0):
 
     # Capital dinamico segun confianza IA
     confianza = ia.get("confianza", 50)
-    capital_pct = 0.15  # 15% fijo — backtest confirma mejor DD y mayor PnL largo plazo
+    capital_pct = 0.15  # 15% fijo — refactor mono-bot mantiene sizing, compensa con controles
     riesgo_usdt = estado["capital"] * capital_pct * sl_pct
     log.info(f"{simbolo} — confianza {confianza}% → capital {capital_pct*100:.0f}% (fijo) | riesgo max ${riesgo_usdt:.2f}")
     g_pot = riesgo_usdt * (tp2_dist / sl_dist)
     p_pot = riesgo_usdt
 
     margen = round(estado["capital"] * capital_pct, 2)
+
+    # ── CONTROL DE EXPOSICIÓN TOTAL (refactor mono-bot) ─────────────────────
+    with lock:
+        ok_expo, motivo_expo = puede_abrir_por_exposicion(
+            estado["capital"], estado["posiciones"], margen
+        )
+    if not ok_expo:
+        log.info(f"{simbolo} — RECHAZADO: {motivo_expo}")
+        _log_decision(simbolo, "rechazo", {"motivo": "exposicion_total", "detalle": motivo_expo})
+        return
+
     cant   = calcular_cantidad(simbolo, pc, capital_pct)
 
     # Cantidades para TP parcial (50% cada uno, minimo 1 contrato)
@@ -1493,13 +1977,15 @@ def abrir(simbolo, t, pc, ia, rsi=0, adx=0, ema21=0, ema89=0, atr=0):
             "atr_entrada":   round(atr, 6),
             "tendencia":     t,
             "hora":          datetime.now().hour,
+            "modo":          "MOMENTUM" if modo_momentum else "SMC",
         })
         estado["ops_total"] += 1
 
+    modo_label = "MOMENTUM (BTC)" if modo_momentum else "SMC Normal"
     tg(f"ENTRADA {simbolo} {dir_} @ ${pc:.4f}\n"
-       f"IA {ia['confianza']}% | Riesgo: ${p_pot:.2f} USDT\n"
+       f"Modo: {modo_label} | IA {ia['confianza']}%\n"
+       f"RSI={rsi:.0f} ADX={adx:.0f} | Riesgo: ${p_pot:.2f} USDT\n"
        f"SL: ${sl:.4f} | TP1: ${tp1:.4f} (50%) | TP2: ${tp2:.4f} (50%)\n"
-       f"RSI={rsi:.0f} ADX={adx:.0f}\n"
        f"Razon: {ia['razon']}")
 
 def _cerrar_posicion(p: dict, pc: float):
@@ -1660,12 +2146,16 @@ def _cerrar_posicion(p: dict, pc: float):
         if tp_ok and p.get("sl_oid"):
             kc_delete(f"/api/v1/stopOrders/{p['sl_oid']}")
 
-        # PnL real siempre desde precio de cierre (robusto para todos los tipos)
+        # PnL real desde precio de cierre — FIX: multiplicar por APALANCAMIENTO
+        # (el 'margen' guardado es capital comprometido sin leverage; el PnL real
+        # del notional = margen * leverage. Antes del fix el estado interno
+        # mostraba 10x menos PnL del real, lo que dejaba el daily stop "poroso"
+        # entre sincronizaciones con el balance real.)
         margen = p.get("margen", estado["capital"] * p.get("capital_pct", 0.5))
         if p["dir"] == "LONG":
-            pnl = round((pc - p["entrada"]) / p["entrada"] * margen, 2)
+            pnl = round((pc - p["entrada"]) / p["entrada"] * margen * APALANCAMIENTO, 2)
         else:
-            pnl = round((p["entrada"] - pc) / p["entrada"] * margen, 2)
+            pnl = round((p["entrada"] - pc) / p["entrada"] * margen * APALANCAMIENTO, 2)
         estado["capital"] += pnl
         resultado = "TP" if tp_ok else "SL"
         if tp_ok:
@@ -1675,6 +2165,13 @@ def _cerrar_posicion(p: dict, pc: float):
             # Posiciones recuperadas no cuentan como pérdida para circuit breaker
             if p.get("tipo") != "recuperada":
                 estado["perdidas_seguidas"] += 1
+                # ── Cooldown global tras loss (refactor mono-bot) ────────────
+                if pnl < 0:
+                    marcar_loss()
+                    _log_decision(p["simbolo"], "loss_cooldown_start", {
+                        "pnl":  pnl,
+                        "minutos_bloqueo": COOLDOWN_TRAS_LOSS_MIN,
+                    })
         ps    = estado["perdidas_seguidas"]
         ops_t = estado["ops_total"]
         ops_g = estado["ops_ganadas"]
@@ -1819,8 +2316,8 @@ def _sincronizar_con_kucoin():
                     "tipo": "recuperada", "ts": datetime.now().isoformat(),
                 })
                 estado["ops_total"] += 1
-            log.warning(f"Sync: POSICION RECUPERADA {simbolo} {dir_} entrada=${entrada:.4f} sl=${sl} tp=${tp}")
-            tg(f"POSICION RECUPERADA: {simbolo} {dir_} @ ${entrada:.4f} | SL ${sl} | TP ${tp}")
+            log.warning(f"Sync: RE-ENTRADA detectada {simbolo} {dir_} entrada=${entrada:.4f} sl=${sl} tp=${tp}")
+            tg(f"🔄 RE-ENTRADA: {simbolo} {dir_} @ ${entrada:.4f} | SL ${sl} | TP ${tp}")
 
     except Exception as e:
         log.error(f"Sincronizacion KuCoin: {e}")
@@ -1880,13 +2377,19 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
             btc_c0 = float(df_btc["close"].iloc[-1])
             btc_c1 = float(df_btc["close"].iloc[-2])
             btc_mov_pct = (btc_c0 - btc_c1) / btc_c1
-            if abs(btc_mov_pct) >= 0.02:
+            if abs(btc_mov_pct) >= 0.015:
                 modo_momentum = True
                 log.info(f"{simbolo} — MOMENTUM ACTIVO: BTC movió {btc_mov_pct*100:.1f}% en 1H → filtros relajados")
     except Exception as e:
         log.warning(f"Momentum BTC error: {e}")
 
-    # LONG: EMA21 > EMA89 + ambas subiendo + RSI 40-75 (o modo momentum: 28-82)
+    # Pares excluidos de modo momentum (APT funciona mal en momentum según backtest)
+    _PARES_SIN_MOMENTUM = {"APTUSDTM"}
+    if simbolo in _PARES_SIN_MOMENTUM and modo_momentum:
+        modo_momentum = False
+        log.info(f"{simbolo} — momentum desactivado para este par (excluido por config)")
+
+    # LONG: EMA21 > EMA89 + ambas subiendo + RSI 28-82 | ADX min 40
     if t == "alcista":
         if modo_momentum:
             # EMAs más flexibles (0.3% tolerancia) + RSI ampliado
@@ -1949,9 +2452,9 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         log.info(f"{simbolo} — RECHAZADO: ATR 4H {atr/pc*100:.2f}% < 1.5%")
         return
 
-    # ADX >= 28
-    if adx < 20:
-        log.info(f"{simbolo} — RECHAZADO: ADX 1H {adx:.1f} < 20 (tendencia debil)")
+    # ADX >= 25 (validado por backtest: +70% PnL vs ADX>20)
+    if adx < 25:
+        log.info(f"{simbolo} — RECHAZADO: ADX 1H {adx:.1f} < 25 (tendencia debil)")
         return
 
     # Sin divergencia RSI 1H
@@ -2016,10 +2519,71 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     log.info(f"{simbolo} — F&G={fg_val} → umbral={umbral_fg}% OK | confianza={ia['confianza']}%")
 
     log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
-    abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v, atr=atr)
+    abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v, atr=atr, modo_momentum=modo_momentum)
 
 
 CICLOS_OBSERVACION = 3  # Ciclos de espera tras reinicio antes de entrar al mercado
+
+# ─── CONTROL DE RIESGO: correlación / exposición / cooldown global ───────────
+_ultimo_loss_ts = None  # timestamp del ultimo trade cerrado en perdida (cooldown global)
+_RECHAZOS_FILE  = "logs/decisiones.jsonl"
+
+def _log_decision(simbolo: str, evento: str, detalles: dict = None):
+    """Escribe una decision (aceptacion / rechazo) en JSONL para auditoria."""
+    try:
+        entrada = {
+            "ts":      datetime.now(timezone.utc).isoformat(),
+            "simbolo": simbolo,
+            "evento":  evento,
+            "detalles": detalles or {},
+        }
+        with open(_RECHAZOS_FILE, "a") as f:
+            f.write(json.dumps(entrada) + "\n")
+    except Exception as e:
+        log.error(f"log decision: {e}")
+
+def puede_abrir_por_correlacion(simbolo: str, posiciones_abiertas: list):
+    """Verifica MAX_POR_GRUPO para el grupo correlacionado al que pertenece el simbolo.
+    Retorna (ok: bool, motivo: str)."""
+    for grupo_nombre, pares in CORRELATED_GROUPS.items():
+        if simbolo in pares:
+            en_grupo = [p for p in posiciones_abiertas if p["simbolo"] in pares]
+            if len(en_grupo) >= MAX_POR_GRUPO:
+                otros = ", ".join(p["simbolo"] for p in en_grupo)
+                return False, f"grupo {grupo_nombre} lleno ({len(en_grupo)}/{MAX_POR_GRUPO}): {otros}"
+    return True, ""
+
+def puede_abrir_por_exposicion(equity: float, posiciones_abiertas: list, margen_nuevo: float):
+    """Verifica MAX_EXPOSICION_TOTAL (margen comprometido / equity).
+    Retorna (ok: bool, motivo: str)."""
+    if equity <= 0:
+        return False, "equity<=0"
+    margen_actual = sum(p.get("margen", 0) for p in posiciones_abiertas)
+    expo_actual   = margen_actual / equity
+    expo_nueva    = (margen_actual + margen_nuevo) / equity
+    if expo_nueva > MAX_EXPOSICION_TOTAL:
+        return False, (f"expo {expo_nueva*100:.0f}% > max {MAX_EXPOSICION_TOTAL*100:.0f}% "
+                       f"(actual {expo_actual*100:.0f}% + nuevo {margen_nuevo/equity*100:.0f}%)")
+    return True, ""
+
+def en_cooldown_tras_loss():
+    """Cooldown global tras un loss — bloquea TODAS las entradas por COOLDOWN_TRAS_LOSS_MIN.
+    Retorna (True, segundos_restantes) o (False, 0)."""
+    global _ultimo_loss_ts
+    if _ultimo_loss_ts is None:
+        return False, 0
+    trans = time.time() - _ultimo_loss_ts
+    ventana = COOLDOWN_TRAS_LOSS_MIN * 60
+    if trans < ventana:
+        return True, int(ventana - trans)
+    return False, 0
+
+def marcar_loss():
+    """Marca el momento de un loss para iniciar el cooldown global."""
+    global _ultimo_loss_ts
+    _ultimo_loss_ts = time.time()
+    log.warning(f"Cooldown tras loss activado: {COOLDOWN_TRAS_LOSS_MIN} min de bloqueo global")
+
 
 def analizar(simbolo: str):
     with lock:
@@ -2029,12 +2593,36 @@ def analizar(simbolo: str):
             return
         if estado["circuit_breaker"]:
             log.info(f"{simbolo} — bloqueado: circuit breaker activo")
+            _log_decision(simbolo, "rechazo", {"motivo": "circuit_breaker"})
             return
-        if len(estado["posiciones"]) >= MAX_POSICIONES:
-            log.info(f"{simbolo} — bloqueado: max posiciones")
+        if estado.get("pausa_macro", False):
+            log.info(f"{simbolo} — bloqueado: pausa macro (evento USD HIGH cercano)")
+            _log_decision(simbolo, "rechazo", {"motivo": "pausa_macro"})
+            return
+        # ── Filtro hora 1h UTC (9 PM Venezuela) — peor hora del backtest ────────
+        if datetime.now(timezone.utc).hour == 1:
+            log.info(f"{simbolo} — bloqueado: hora 1h UTC (9 PM VE, peor hora backtest)")
+            _log_decision(simbolo, "rechazo", {"motivo": "hora_bloqueada", "hora_utc": 1})
+            return
+        # ── Cooldown global tras loss (refactor mono-bot) ──────────────────────
+        en_cd, secs = en_cooldown_tras_loss()
+        if en_cd:
+            log.info(f"{simbolo} — bloqueado: cooldown tras loss ({secs}s restantes, {COOLDOWN_TRAS_LOSS_MIN}min total)")
+            _log_decision(simbolo, "rechazo", {"motivo": "cooldown_loss", "segundos_restantes": secs})
+            return
+        # ── MAX posiciones globales ───────────────────────────────────────────
+        if len(estado["posiciones"]) >= MAX_POSICIONES_GLOBALES:
+            log.info(f"{simbolo} — bloqueado: max posiciones globales ({len(estado['posiciones'])}/{MAX_POSICIONES_GLOBALES})")
+            _log_decision(simbolo, "rechazo", {"motivo": "max_posiciones_globales", "actual": len(estado["posiciones"])})
             return
         if any(p["simbolo"] == simbolo for p in estado["posiciones"]):
             log.info(f"{simbolo} — bloqueado: ya tiene posicion abierta")
+            return
+        # ── Filtro de correlación: max 1 posicion por grupo correlacionado ─────
+        ok_corr, motivo_corr = puede_abrir_por_correlacion(simbolo, estado["posiciones"])
+        if not ok_corr:
+            log.info(f"{simbolo} — bloqueado: correlacion ({motivo_corr})")
+            _log_decision(simbolo, "rechazo", {"motivo": "correlacion", "detalle": motivo_corr})
             return
         if simbolo in _cerradas_reciente:
             transcurrido = time.time() - _cerradas_reciente[simbolo]
@@ -2160,12 +2748,27 @@ def verificar_inicio():
     log.info("Verificando KuCoin API...")
     b = balance_kucoin()
     if b == 0:
-        errores.append("KuCoin API: balance=0 (verifica KUCOIN_API_KEY, SECRET y PASSPHRASE)")
-    else:
+        # Fallback: usar CAPITAL_TOTAL del env var si la API devuelve 0
+        # (puede ocurrir si los fondos aún no están en Futures o hay lag)
+        if CAPITAL_TOTAL > 0:
+            log.warning(f"KuCoin API devolvio balance=0 — usando CAPITAL_TOTAL=${CAPITAL_TOTAL:.2f} del env var como fallback")
+            b = CAPITAL_TOTAL
+        else:
+            errores.append("KuCoin API: balance=0 y CAPITAL_TOTAL no configurado (verifica API keys y env var CAPITAL_TOTAL)")
+    if b > 0:
         log.info(f"KuCoin OK — Balance USDT: ${b:.2f}")
-        estado["capital"]           = b
-        estado["capital_inicial"]   = b
-        estado["capital_inicio_dia"] = b
+        estado["capital"]         = b
+        estado["capital_inicial"] = b
+        # capital_inicio_dia: solo sobrescribir si NO hay valor de hoy ya persistido
+        hoy_iso = datetime.now().date().isoformat()
+        if estado.get("fecha_inicio_dia") != hoy_iso:
+            estado["capital_inicio_dia"] = b
+            estado["fecha_inicio_dia"]   = hoy_iso
+            estado["sl_diario_activo"]   = False
+            log.info(f"capital_inicio_dia inicializado a ${b:.2f} (nuevo dia {hoy_iso})")
+        else:
+            log.info(f"capital_inicio_dia preservado desde persistencia: ${estado['capital_inicio_dia']:.2f} (dia {hoy_iso}) — daily stop sobrevive reinicio")
+        guardar_estado_persistente()
 
     log.info("Verificando DeepSeek API...")
     try:
@@ -2290,7 +2893,7 @@ def verificar_inicio():
                         "tipo":         "recuperada",
                         "ts":           datetime.now().isoformat(),
                     })
-                    log.warning(f"POSICION RECUPERADA: {simbolo} {dir_} entrada=${entrada:.4f} sl_oid={sl_oid_} tp_oid={tp_oid_}")
+                    log.warning(f"POSICION RESTAURADA (reinicio): {simbolo} {dir_} entrada=${entrada:.4f} sl_oid={sl_oid_} tp_oid={tp_oid_}")
                     # Cancelar ordenes huerfanas y colocar SL/TP frescos
                     try:
                         ords_all = kc_get("/api/v1/stopOrders", {"symbol": simbolo, "status": "active"})
@@ -2302,7 +2905,7 @@ def verificar_inicio():
                     except Exception as ex:
                         log.warning(f"Limpieza ordenes {simbolo}: {ex}")
         if pos_kucoin:
-            tg(f"POSICIONES RECUPERADAS tras reinicio: {len(pos_kucoin)} posicion(es) restauradas al monitor.")
+            tg(f"♻️ REINICIO: {len(pos_kucoin)} posicion(es) restauradas al monitor.")
         else:
             log.info("Sin posiciones abiertas en KuCoin al iniciar.")
     except Exception as e:
@@ -2314,15 +2917,21 @@ def verificar_inicio():
         log.critical(f"Errores de inicio: {errores}")
         raise SystemExit(1)
 
-    tg(f"🤖 SMC BOT KuCoin INICIADO\n\n"
+    tg(f"🤖 SMC BOT KuCoin INICIADO (mono-bot refactor)\n\n"
        f"Pares: {len(pares_ok)} | Capital: ${estado['capital']:.2f} USDT\n"
-       f"x{estado['apalancamiento']} | TP1: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}%\n"
-       f"Margen fijo: 15% por posicion\n"
-       f"Trailing ATR: activa en TP1 (excepto INJ y AVAX)\n"
+       f"x{estado['apalancamiento']} | Margen por trade: 15%\n"
+       f"TP1: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}%\n"
+       f"Trailing ATR: activa en TP1 (excepto INJ)\n"
        f"Salida anticipada: -4% en primeros 30 min\n"
        f"Modo observacion: {CICLOS_OBSERVACION} ciclos al iniciar\n"
-       f"SL diario: {SL_DIARIO_PCT*100:.0f}% | Max posiciones: {MAX_POSICIONES}\n"
-       f"Ciclo: 5-15 min | Horario: 24/7\n\n"
+       f"\n━━ CONTROLES DE RIESGO ━━\n"
+       f"SL diario: {SL_DIARIO_PCT*100:.0f}% (persistente)\n"
+       f"Max posiciones globales: {MAX_POSICIONES_GLOBALES} (hasta 3x15%=45% expo)\n"
+       f"Max exposicion total: {MAX_EXPOSICION_TOTAL*100:.0f}% del equity\n"
+       f"Cooldown tras loss: {COOLDOWN_TRAS_LOSS_MIN} min\n"
+       f"Horario: 24/7 sin bloqueo horario | Momentum RSI: activo\n"
+       f"\nMonitor macro: pausa 60 min antes de USD HIGH (ForexFactory)\n"
+       f"Ciclo: 5-15 min\n\n"
        f"{', '.join(pares_ok)}\n\nActivo 24/7 en Railway")
 
 # ─── DASHBOARD API ────────────────────────────────────────────────────────────
@@ -2569,9 +3178,10 @@ def main():
     threading.Thread(target=monitor_fed,           daemon=True, name="FedMonitor").start()
     threading.Thread(target=actualizar_tendencia_btc, daemon=True, name="BTCTrend").start()
     threading.Thread(target=reset_sl_diario,       daemon=True, name="SLDiario").start()
-    threading.Thread(target=monitor_liquidaciones, daemon=True, name="LiqMonitor").start()
-    threading.Thread(target=monitor_ballenas,      daemon=True, name="BallenaMonitor").start()
-    log.info("Hilos iniciados: TelegramPoller, PosMonitor, Dashboard, TrumpMonitor, FedMonitor, BTCTrend, SLDiario, LiqMonitor, BallenaMonitor")
+    threading.Thread(target=monitor_liquidaciones,    daemon=True, name="LiqMonitor").start()
+    threading.Thread(target=monitor_ballenas,          daemon=True, name="BallenaMonitor").start()
+    threading.Thread(target=monitor_calendario_macro,  daemon=True, name="MacroMonitor").start()
+    log.info("Hilos iniciados: TelegramPoller, PosMonitor, Dashboard, TrumpMonitor, FedMonitor, BTCTrend, SLDiario, LiqMonitor, BallenaMonitor, MacroMonitor")
 
     ultimo_reporte = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 

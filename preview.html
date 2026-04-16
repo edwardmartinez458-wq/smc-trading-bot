@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMC Bot — BingX Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg:     #0d0f14;
+    --card:   #161922;
+    --border: #252a35;
+    --text:   #e2e8f0;
+    --muted:  #64748b;
+    --green:  #22c55e;
+    --red:    #ef4444;
+    --yellow: #f59e0b;
+    --blue:   #3b82f6;
+    --purple: #8b5cf6;
+    --accent: #0ea5e9;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'SF Mono','Fira Code',monospace; font-size: 13px; min-height: 100vh; }
+
+  header {
+    background: var(--card); border-bottom: 1px solid var(--border);
+    padding: 16px 24px; display: flex; align-items: center;
+    justify-content: space-between; position: sticky; top: 0; z-index: 100;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; letter-spacing: .5px; }
+  .logo-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .header-right { display: flex; align-items: center; gap: 16px; color: var(--muted); font-size: 11px; }
+  .cb-badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: .5px; }
+  .cb-ok { background: rgba(34,197,94,.15); color: var(--green); border: 1px solid rgba(34,197,94,.3); }
+  .demo-tag { background: rgba(245,158,11,.15); color: var(--yellow); border: 1px solid rgba(245,158,11,.3); padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+
+  main { max-width: 1300px; margin: 0 auto; padding: 24px 20px; display: grid; gap: 20px; }
+  .row-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+  .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .row-1 { display: grid; grid-template-columns: 1fr; }
+  @media(max-width:900px){ .row-4{grid-template-columns:repeat(2,1fr)} .row-2{grid-template-columns:1fr} }
+  @media(max-width:480px){ .row-4{grid-template-columns:1fr} }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .card-title { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 10px; }
+  .kpi-value { font-size: 28px; font-weight: 700; line-height: 1.1; letter-spacing: -.5px; }
+  .kpi-sub { margin-top: 6px; font-size: 11px; color: var(--muted); }
+  .kpi-sub span { font-weight: 600; }
+  .up { color: var(--green); } .down { color: var(--red); } .neu { color: var(--muted); }
+  .spark { margin-top: 14px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .spark-fill { height: 100%; border-radius: 2px; transition: width .6s ease; }
+
+  .pos-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+  .pos-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; }
+  .pos-dir { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .5px; }
+  .pos-long { background: rgba(34,197,94,.15); color: var(--green); border: 1px solid rgba(34,197,94,.3); }
+  .pos-short { background: rgba(239,68,68,.15); color: var(--red); border: 1px solid rgba(239,68,68,.3); }
+  .pos-info { display: flex; flex-direction: column; gap: 3px; }
+  .pos-sym { font-weight: 700; font-size: 14px; }
+  .pos-meta { color: var(--muted); font-size: 11px; }
+  .pos-right { text-align: right; }
+  .pos-entry { font-size: 15px; font-weight: 600; }
+  .pos-sltp { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  .pares-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .par-chip { padding: 5px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; background: rgba(14,165,233,.1); border: 1px solid rgba(14,165,233,.2); color: var(--accent); }
+  .par-chip.activo { background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.3); color: var(--green); }
+
+  .hist-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid rgba(37,42,53,.6); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .5px; }
+  .tp-badge { background: rgba(34,197,94,.15); color: var(--green); border: 1px solid rgba(34,197,94,.3); }
+  .sl-badge { background: rgba(239,68,68,.15); color: var(--red); border: 1px solid rgba(239,68,68,.3); }
+  .long-b { background: rgba(34,197,94,.1); color: var(--green); }
+  .short-b { background: rgba(239,68,68,.1); color: var(--red); }
+
+  .log-box { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; height: 220px; overflow-y: auto; font-size: 11px; line-height: 1.7; color: var(--muted); }
+  .log-box::-webkit-scrollbar { width: 4px; }
+  .log-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .log-line { display: block; white-space: pre-wrap; }
+  .log-line.err { color: var(--red); } .log-line.warn { color: var(--yellow); } .log-line.ok { color: var(--green); }
+
+  footer { text-align: center; color: var(--muted); font-size: 11px; padding: 24px; border-top: 1px solid var(--border); margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    SMC Bot — BingX
+  </div>
+  <div class="header-right">
+    <span style="color:var(--muted)">Actualizado: 06:14:32</span>
+    <span class="demo-tag">★ DEMO</span>
+    <span class="cb-badge cb-ok">● NORMAL</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- KPIs -->
+  <div class="row-4">
+    <div class="card">
+      <div class="card-title">Capital Actual</div>
+      <div class="kpi-value up">$127.43</div>
+      <div class="kpi-sub">Inicial: <span>$100.00</span></div>
+      <div class="spark"><div class="spark-fill" style="background:var(--accent);width:64%"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Ganancia Total</div>
+      <div class="kpi-value up">+$27.43</div>
+      <div class="kpi-sub">+27.43% vs capital inicial</div>
+      <div class="spark"><div class="spark-fill" style="background:var(--green);width:74%"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Win Rate</div>
+      <div class="kpi-value up">71.4%</div>
+      <div class="kpi-sub">Operaciones: <span>5W / 2L</span></div>
+      <div class="spark"><div class="spark-fill" style="background:var(--purple);width:71%"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Apalancamiento</div>
+      <div class="kpi-value neu">x10</div>
+      <div class="kpi-sub">Posiciones: <span>2</span> / 2</div>
+      <div class="spark"><div class="spark-fill" style="background:var(--yellow);width:50%"></div></div>
+    </div>
+  </div>
+
+  <!-- Posiciones + Pares -->
+  <div class="row-2">
+    <div class="card">
+      <div class="card-title">Posiciones Abiertas</div>
+      <div class="pos-list">
+        <div class="pos-card">
+          <div class="pos-dir pos-long">LONG</div>
+          <div class="pos-info">
+            <div class="pos-sym">SOL-USDT</div>
+            <div class="pos-meta">⚡ x10 · 09/03/2026 02:00 · IA 78%</div>
+          </div>
+          <div class="pos-right">
+            <div class="pos-entry">$143.2500</div>
+            <div class="pos-sltp">SL $140.3850 · TP $163.3050</div>
+          </div>
+        </div>
+        <div class="pos-card">
+          <div class="pos-dir pos-short">SHORT</div>
+          <div class="pos-info">
+            <div class="pos-sym">ETH-USDT</div>
+            <div class="pos-meta">⚡ x10 · 09/03/2026 02:00 · IA 65%</div>
+          </div>
+          <div class="pos-right">
+            <div class="pos-entry">$2,184.0000</div>
+            <div class="pos-sltp">SL $2,227.6800 · TP $1,921.9200</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Pares Monitoreados</div>
+      <div class="pares-grid">
+        <div class="par-chip activo">SOL-USDT</div>
+        <div class="par-chip activo">ETH-USDT</div>
+        <div class="par-chip activo">BTC-USDT</div>
+        <div class="par-chip activo">AVAX-USDT</div>
+        <div class="par-chip activo">LINK-USDT</div>
+        <div class="par-chip activo">ARB-USDT</div>
+        <div class="par-chip activo">OP-USDT</div>
+        <div class="par-chip activo">INJ-USDT</div>
+        <div class="par-chip">BNB-USDT</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Historial -->
+  <div class="card row-1">
+    <div class="card-title">Historial de Operaciones</div>
+    <div class="hist-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th><th>Par</th><th>Dir.</th><th>Entrada</th>
+            <th>Salida</th><th>PnL</th><th>Resultado</th><th>IA %</th><th>Capital post</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>09/03/26 01:00</td>
+            <td><b>INJ-USDT</b></td>
+            <td><span class="badge long-b">LONG</span></td>
+            <td>$22.1400</td><td>$25.2396</td>
+            <td class="up" style="font-weight:600">+$15.54</td>
+            <td><span class="badge tp-badge">TP</span></td>
+            <td>82%</td><td>$127.43</td>
+          </tr>
+          <tr>
+            <td>08/03/26 21:00</td>
+            <td><b>BTC-USDT</b></td>
+            <td><span class="badge short-b">SHORT</span></td>
+            <td>$84,200.00</td><td>$84,200.00</td>
+            <td class="down" style="font-weight:600">-$2.22</td>
+            <td><span class="badge sl-badge">SL</span></td>
+            <td>61%</td><td>$111.89</td>
+          </tr>
+          <tr>
+            <td>08/03/26 17:00</td>
+            <td><b>AVAX-USDT</b></td>
+            <td><span class="badge long-b">LONG</span></td>
+            <td>$31.4500</td><td>$35.8530</td>
+            <td class="up" style="font-weight:600">+$15.54</td>
+            <td><span class="badge tp-badge">TP</span></td>
+            <td>74%</td><td>$114.11</td>
+          </tr>
+          <tr>
+            <td>08/03/26 13:00</td>
+            <td><b>LINK-USDT</b></td>
+            <td><span class="badge long-b">LONG</span></td>
+            <td>$14.8200</td><td>$16.8948</td>
+            <td class="up" style="font-weight:600">+$15.54</td>
+            <td><span class="badge tp-badge">TP</span></td>
+            <td>69%</td><td>$98.57</td>
+          </tr>
+          <tr>
+            <td>08/03/26 09:00</td>
+            <td><b>SOL-USDT</b></td>
+            <td><span class="badge short-b">SHORT</span></td>
+            <td>$148.3000</td><td>$148.3000</td>
+            <td class="down" style="font-weight:600">-$2.22</td>
+            <td><span class="badge sl-badge">SL</span></td>
+            <td>58%</td><td>$83.03</td>
+          </tr>
+          <tr>
+            <td>07/03/26 06:00</td>
+            <td><b>ETH-USDT</b></td>
+            <td><span class="badge long-b">LONG</span></td>
+            <td>$2,050.00</td><td>$2,337.00</td>
+            <td class="up" style="font-weight:600">+$15.54</td>
+            <td><span class="badge tp-badge">TP</span></td>
+            <td>88%</td><td>$85.25</td>
+          </tr>
+          <tr>
+            <td>07/03/26 02:00</td>
+            <td><b>ARB-USDT</b></td>
+            <td><span class="badge long-b">LONG</span></td>
+            <td>$0.4820</td><td>$0.5495</td>
+            <td class="up" style="font-weight:600">+$15.54</td>
+            <td><span class="badge tp-badge">TP</span></td>
+            <td>72%</td><td>$69.71</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Logs -->
+  <div class="card row-1">
+    <div class="card-title">Logs del Bot</div>
+    <div class="log-box">
+<span class="log-line ok">2026-03-09 06:00:01 | INFO | ══ CICLO 12 | 2026-03-09 06:00 ══</span>
+<span class="log-line">2026-03-09 06:00:02 | INFO | Reporte diario enviado por Telegram</span>
+<span class="log-line ok">2026-03-09 02:00:14 | INFO | SOL-USDT ✅ 5/5 — consultando IA...</span>
+<span class="log-line ok">2026-03-09 02:00:16 | INFO | SOL-USDT ✅ IA aprueba 78% — ejecutando LONG</span>
+<span class="log-line ok">2026-03-09 02:00:18 | INFO | ETH-USDT ✅ 5/5 — consultando IA...</span>
+<span class="log-line ok">2026-03-09 02:00:20 | INFO | ETH-USDT ✅ IA aprueba 65% — ejecutando SHORT</span>
+<span class="log-line">2026-03-09 02:00:01 | INFO | ══ CICLO 11 | 2026-03-09 02:00 ══</span>
+<span class="log-line">2026-03-08 22:05:33 | INFO | Monitor: INJ-USDT alcanzó TP @ $25.2396 — cerrando</span>
+<span class="log-line ok">2026-03-08 22:05:34 | INFO | PnL: +$15.54 | Capital: $127.43</span>
+<span class="log-line warn">2026-03-08 21:10:12 | WARNING | BTC-USDT alcanzó SL @ $84,200 — cerrando</span>
+<span class="log-line warn">2026-03-08 21:10:13 | WARNING | PnL: -$2.22 | Capital: $111.89</span>
+<span class="log-line">2026-03-08 22:00:01 | INFO | ══ CICLO 10 | 2026-03-08 22:00 ══</span>
+<span class="log-line">2026-03-08 18:00:01 | INFO | ══ CICLO 9 | 2026-03-08 18:00 ══</span>
+<span class="log-line">2026-03-08 17:05:44 | INFO | Monitor: AVAX-USDT alcanzó TP @ $35.8530 — cerrando</span>
+<span class="log-line ok">2026-03-08 17:05:45 | INFO | PnL: +$15.54 | Capital: $114.11</span>
+<span class="log-line">2026-03-08 14:00:01 | INFO | ══ CICLO 8 | 2026-03-08 14:00 ══</span>
+<span class="log-line">2026-03-08 13:22:11 | INFO | Monitor: LINK-USDT alcanzó TP @ $16.8948 — cerrando</span>
+<span class="log-line ok">2026-03-08 13:22:12 | INFO | PnL: +$15.54 | Capital: $98.57</span>
+<span class="log-line">2026-03-08 10:00:01 | INFO | ══ CICLO 7 | 2026-03-08 10:00 ══</span>
+<span class="log-line warn">2026-03-08 09:45:03 | WARNING | SOL-USDT alcanzó SL — cerrando SHORT</span>
+<span class="log-line">2026-03-08 06:00:01 | INFO | SMC Bot BingX iniciando...</span>
+<span class="log-line ok">2026-03-08 06:00:03 | INFO | BingX OK — Balance USDT: $100.00</span>
+<span class="log-line ok">2026-03-08 06:00:04 | INFO | Anthropic OK</span>
+<span class="log-line ok">2026-03-08 06:00:05 | INFO | Telegram OK</span>
+<span class="log-line ok">2026-03-08 06:00:06 | INFO | Hilos iniciados: TelegramPoller, PosMonitor, Dashboard</span>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  SMC Bot v2 · BingX Futuros Perpetuos · <span style="color:var(--yellow)">★ Vista previa con datos de ejemplo</span>
+</footer>
+
+</body>
+</html>

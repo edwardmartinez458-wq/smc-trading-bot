@@ -127,8 +127,7 @@
   /* ── MAIN ───────────────────────────────────────────── */
   main { max-width: 1700px; margin: 0 auto; padding: 1.25rem; }
 
-  .bots-split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
-  @media(max-width: 960px) { .bots-split { grid-template-columns: 1fr; } }
+  .bots-split { display: grid; grid-template-columns: 1fr; gap: 1.25rem; }
 
   .bot-panel { display: flex; flex-direction: column; gap: 0.85rem; }
 
@@ -370,17 +369,12 @@
 
 <!-- ── HEADER ───────────────────────────────────────── -->
 <header>
-  <div class="logo">SMC_BOTS</div>
+  <div class="logo">SMC_BOT</div>
   <div class="header-right">
     <div class="status-pill kc" id="kc-pill">
       <div class="dot kc" id="kc-dot"></div>
       <span>KUCOIN</span>
       <span id="long-badge">ONLINE</span>
-    </div>
-    <div class="status-pill bx" id="bx-pill">
-      <div class="dot bx" id="bx-dot"></div>
-      <span>BINGX</span>
-      <span id="short-badge">ONLINE</span>
     </div>
     <span id="last-update">--:--</span>
   </div>
@@ -434,8 +428,6 @@
       <span class="equity-title">📈 Equity Curve — Capital en el tiempo</span>
       <div class="equity-legend">
         <span class="kc-leg">KuCoin</span>
-        <span class="bx-leg">BingX</span>
-        <span class="tot-leg">Total</span>
       </div>
     </div>
     <div class="equity-chart">
@@ -455,7 +447,7 @@
             ◈ BOT KUCOIN
             <span class="bot-dir-badge">LONG · SHORT</span>
           </div>
-          <div class="bot-exchange">KuCoin Futures · INJUSDTM · SUIUSDTM · DOTUSDTM · APTUSDTM · POLUSDTM · SOLUSDTM · AVAXUSDTM</div>
+          <div class="bot-exchange">KuCoin Futures · INJ · SUI · APT · SOL · DOT · AVAX</div>
         </div>
         <div class="controls">
           <button class="btn btn-pause"  onclick="pausarBot('long')">⏸ Pausar</button>
@@ -532,91 +524,6 @@
       </div>
     </div>
 
-    <!-- ══════════ BOT BINGX ══════════ -->
-    <div class="bot-panel">
-      <div class="bot-header bx-header">
-        <div>
-          <div class="bot-name bx">
-            ◈ BOT BINGX
-            <span class="bot-dir-badge">LONG · SHORT</span>
-          </div>
-          <div class="bot-exchange">BingX Futures · INJ-USDT · SUI-USDT · APT-USDT · POL-USDT · SOL-USDT</div>
-        </div>
-        <div class="controls">
-          <button class="btn btn-pause"     onclick="pausarBot('short')">⏸ Pausar</button>
-          <button class="btn btn-resume bx" onclick="reactivarBot('short')">▶ Reactivar</button>
-        </div>
-      </div>
-
-      <div class="stats-grid">
-        <!-- Balance + Sparkline -->
-        <div class="stat bx-top">
-          <div class="stat-label">Balance</div>
-          <div class="stat-val bx" id="s-capital">$—</div>
-          <div class="stat-sub">USDT</div>
-          <div class="sparkline-wrap"><svg id="s-spark" viewBox="0 0 100 28" preserveAspectRatio="none"></svg></div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">P&L Abierto</div>
-          <div class="stat-val" id="s-pnl">$—</div>
-          <div class="stat-sub" id="s-pnl-pct">—</div>
-        </div>
-        <div class="stat blue-top">
-          <div class="stat-label">Posiciones</div>
-          <div class="stat-val blue" id="s-num-pos">—</div>
-          <div class="stat-sub">Abiertas</div>
-        </div>
-        <!-- Ganadas + Racha -->
-        <div class="stat bx-top">
-          <div class="stat-label">Ganadas</div>
-          <div class="stat-val green" id="s-wins">—</div>
-          <div class="stat-sub" id="s-wr">Win rate</div>
-          <div class="wr-bar"><div class="wr-fill" id="s-wr-fill" style="width:0%"></div></div>
-        </div>
-        <div class="stat red-top">
-          <div class="stat-label">Perdidas</div>
-          <div class="stat-val red" id="s-losses">—</div>
-          <div class="stat-sub" id="s-pnl-hist">P&L total</div>
-        </div>
-        <div class="stat bx-top">
-          <div class="stat-label">PnL Hoy</div>
-          <div class="stat-val" id="s-pnl-hoy">$—</div>
-          <div class="stat-sub" id="s-streak-wrap"></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header bx-header">
-          <span class="card-title">Posiciones Abiertas</span>
-          <div style="display:flex;align-items:center;gap:0.5rem;">
-            <span class="card-badge" id="s-pos-count">0</span>
-            <span class="ciclo-badge">🔄 Ciclo <span id="s-ciclo">—</span></span>
-          </div>
-        </div>
-        <div id="s-pos-cards" class="pos-cards">
-          <div class="empty">Sin posiciones abiertas</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header bx-header">
-          <span class="card-title">Log en vivo</span>
-          <span class="card-badge" id="s-log-count">0</span>
-        </div>
-        <div class="log-list" id="s-log-list"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-header bx-header">
-          <span class="card-title">Últimas Operaciones</span>
-          <span class="card-badge" id="s-hist-count">0</span>
-        </div>
-        <div style="padding:0 1rem" id="s-hist-list">
-          <div class="empty">Sin historial</div>
-        </div>
-      </div>
-    </div>
-
   </div>
 </main>
 
@@ -624,12 +531,11 @@
 
 <script>
   const LONG_URL  = '';
-  const SHORT_URL = 'https://smc-short-bot-production.up.railway.app';
   const META_GOAL = 1000;
 
   // Balance history for sparklines (max 30 puntos por sesión)
-  const balHistory  = { l: [], s: [] };
-  const capitalNow  = { l: 0, s: 0 };
+  const balHistory  = { l: [] };
+  const capitalNow  = { l: 0 };
 
   // ── Equity Curve — persistencia en localStorage ──────
   const EQ_KEY = 'smc_equity_v2';
@@ -639,11 +545,11 @@
     catch(e) { return { dates:[], kc:[], bx:[], tot:[] }; }
   }
   function saveEquity(eq) { localStorage.setItem(EQ_KEY, JSON.stringify(eq)); }
-  function pushEquity(kc, bx) {
+  function pushEquity(kc) {
     const eq  = loadEquity();
     const now = new Date().toLocaleTimeString('es-CL', {hour:'2-digit',minute:'2-digit'});
     const lbl = todayStr().slice(5) + ' ' + now;
-    eq.dates.push(lbl); eq.kc.push(kc); eq.bx.push(bx); eq.tot.push(kc+bx);
+    eq.dates.push(lbl); eq.kc.push(kc); eq.bx.push(0); eq.tot.push(kc);
     if (eq.dates.length > 200) { eq.dates.shift(); eq.kc.shift(); eq.bx.shift(); eq.tot.shift(); }
     saveEquity(eq);
     renderEquity(eq);
@@ -667,9 +573,7 @@
       return `<path d="${area}" fill="${color}" opacity="0.07"/>
               <path d="${line}" fill="none" stroke="${color}" stroke-width="1.8" opacity="${opacity}" stroke-linecap="round" stroke-linejoin="round"/>`;
     }
-    svg.innerHTML = polyline(eq.tot,'rgba(255,255,255,0.6)',0.5) +
-                    polyline(eq.kc,'#00f5c8') +
-                    polyline(eq.bx,'#c850ff');
+    svg.innerHTML = polyline(eq.kc,'#00f5c8');
   }
 
   // ── PnL del día ──────────────────────────────────────
@@ -756,7 +660,7 @@
 
   // ── Capital total + barra de meta ────────────────────
   function updateMeta() {
-    const total = capitalNow.l + capitalNow.s;
+    const total = capitalNow.l;
     document.getElementById('total-capital').textContent = total > 0 ? '$' + fmt(total) : '$—';
     if (total > 0) {
       const pct = Math.min(100, (total / META_GOAL) * 100);
@@ -789,7 +693,7 @@
             <span class="pos-side ${isLong?'long':'short'}">${isLong?'LONG':'SHORT'}</span>
             <span class="pos-lev">10x</span>
           </div>
-          <span class="pos-ia">IA ${p.confianza_ia||'—'}%</span>
+          <span class="pos-ia">IA ${p.confianza_ia||'—'}% | ${p.modo||'SMC'}</span>
         </div>
         <div class="pos-pnl ${pnlCls}">
           ${sign}$${fmt(pnl)}
@@ -830,17 +734,16 @@
       renderPnlHoy(prefix, cap);
 
       // Equity curve
-      if (capitalNow.l > 0 && capitalNow.s > 0) {
-        pushEquity(capitalNow.l, capitalNow.s);
+      if (capitalNow.l > 0) {
+        pushEquity(capitalNow.l);
       } else {
         const eq = loadEquity();
-        if (eq.tot.length > 1) renderEquity(eq);
+        if (eq.kc.length > 1) renderEquity(eq);
       }
 
-      const isKc  = prefix === 'l';
-      const pill  = document.getElementById(isKc ? 'kc-pill'    : 'bx-pill');
-      const dot   = document.getElementById(isKc ? 'kc-dot'     : 'bx-dot');
-      const badge = document.getElementById(isKc ? 'long-badge' : 'short-badge');
+      const pill  = document.getElementById('kc-pill');
+      const dot   = document.getElementById('kc-dot');
+      const badge = document.getElementById('long-badge');
 
       if (d.pausado) {
         badge.textContent = 'PAUSADO';
@@ -848,8 +751,8 @@
         dot.className  = 'dot off';
       } else {
         badge.textContent = 'ONLINE';
-        pill.className = isKc ? 'status-pill kc' : 'status-pill bx';
-        dot.className  = isKc ? 'dot kc'         : 'dot bx';
+        pill.className = 'status-pill kc';
+        dot.className  = 'dot kc';
       }
 
       const pos      = d.posiciones || [];
@@ -860,9 +763,8 @@
       document.getElementById(prefix + '-pnl-pct').textContent = fmt(pnlTotal / (cap||1) * 100) + '%';
 
     } catch(e) {
-      const isKc = prefix === 'l';
-      document.getElementById(isKc ? 'long-badge' : 'short-badge').textContent = 'ERROR';
-      document.getElementById(isKc ? 'kc-pill' : 'bx-pill').className = 'status-pill off';
+      document.getElementById('long-badge').textContent = 'ERROR';
+      document.getElementById('kc-pill').className = 'status-pill off';
     }
   }
 
@@ -986,35 +888,32 @@
 
   // ── Controles ────────────────────────────────────────
   async function pausarBot(bot) {
-    const url = bot === 'long' ? LONG_URL : SHORT_URL;
     try {
-      const r = await fetch(url + '/api/pausar', { method:'POST' });
+      const r = await fetch(LONG_URL + '/api/pausar', { method:'POST' });
       const d = await r.json();
       showNotif(d.mensaje || 'Bot pausado', 'var(--warn)');
-      cargarEstado(bot==='long'?'l':'s', url);
+      cargarEstado('l', LONG_URL);
     } catch(e) { showNotif('Error al pausar', 'var(--red)'); }
   }
 
   async function reactivarBot(bot) {
-    const url = bot === 'long' ? LONG_URL : SHORT_URL;
     try {
-      const r = await fetch(url + '/api/reactivar', { method:'POST' });
+      const r = await fetch(LONG_URL + '/api/reactivar', { method:'POST' });
       const d = await r.json();
-      showNotif(d.mensaje || 'Bot reactivado', bot==='long'?'var(--kc)':'var(--bx)');
-      cargarEstado(bot==='long'?'l':'s', url);
+      showNotif(d.mensaje || 'Bot reactivado', 'var(--kc)');
+      cargarEstado('l', LONG_URL);
     } catch(e) { showNotif('Error al reactivar', 'var(--red)'); }
   }
 
   async function cerrarManual(simbolo, prefix) {
-    const url = prefix === 'l' ? LONG_URL : SHORT_URL;
     if (!confirm(`¿Cerrar posición ${simbolo} al precio de mercado?`)) return;
     try {
-      const r = await fetch(url + '/api/cerrar_manual', {
+      const r = await fetch(LONG_URL + '/api/cerrar_manual', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ simbolo })
       });
       const d = await r.json();
-      if (d.ok) { showNotif(`✓ ${simbolo} cerrado`, 'var(--green)'); cargarEstado(prefix, url); }
+      if (d.ok) { showNotif(`✓ ${simbolo} cerrado`, 'var(--green)'); cargarEstado('l', LONG_URL); }
       else showNotif(`Error: ${d.error}`, 'var(--red)');
     } catch(e) { showNotif('Error al cerrar', 'var(--red)'); }
   }
@@ -1022,11 +921,8 @@
   // ── Tick principal ───────────────────────────────────
   function tick() {
     cargarEstado('l', LONG_URL);
-    cargarEstado('s', SHORT_URL);
     cargarLogs('l', LONG_URL);
-    cargarLogs('s', SHORT_URL);
     cargarHistorial('l', LONG_URL);
-    cargarHistorial('s', SHORT_URL);
     document.getElementById('last-update').textContent = new Date().toLocaleTimeString('es-CL');
   }
 
