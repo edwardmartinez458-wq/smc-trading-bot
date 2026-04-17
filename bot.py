@@ -241,6 +241,13 @@ def obtener_fear_greed() -> str:
     except Exception:
         return ""
 
+def obtener_fear_greed_valor() -> int:
+    """Devuelve el valor numérico de Fear & Greed (0-100). Default 50 si falla."""
+    import re
+    texto = obtener_fear_greed()
+    match = re.search(r'(\d+)', texto)
+    return int(match.group(1)) if match else 50
+
 def obtener_funding_rate(simbolo: str) -> str:
     """Obtiene el funding rate actual del par en KuCoin Futuros."""
     try:
@@ -913,6 +920,22 @@ def detectar_perfil_macro(symbol="XBTUSDTM") -> str:
     except Exception as e:
         log.warning(f"detectar_perfil_macro error: {e}")
         return "NONE"
+
+# ─── CACHE PERFIL MACRO (5 min TTL) ───────────────────────────────────────────
+_cache_perfil_macro = {"ts": 0.0, "perfil": None}
+
+def obtener_perfil_macro_cacheado():
+    """Devuelve perfil_macro con cache de 5 min para evitar saturar API."""
+    import time
+    now = time.time()
+    if now - _cache_perfil_macro["ts"] > 300:
+        try:
+            _cache_perfil_macro["perfil"] = detectar_perfil_macro()
+        except Exception as e:
+            log.warning(f"cache perfil_macro error: {e}")
+            _cache_perfil_macro["perfil"] = None
+        _cache_perfil_macro["ts"] = now
+    return _cache_perfil_macro["perfil"]
 
 # ─── AUTO-GUARDADO MACRO ──────────────────────────────────────────────────────
 
@@ -2458,6 +2481,33 @@ def monitor_posiciones():
 
 # ─── ANALISIS PAR ─────────────────────────────────────────────────────────────
 
+def detectar_momentum_btc(df_btc):
+    """Momentum BTC v6: regla clásica (1H ≥1.5%) + acumulada (3H ≥2.5% con aceleración)."""
+    if len(df_btc) < 4:
+        return False, 0.0
+
+    c1 = (df_btc["close"].iloc[-1] - df_btc["close"].iloc[-2]) / df_btc["close"].iloc[-2]
+    c2 = (df_btc["close"].iloc[-2] - df_btc["close"].iloc[-3]) / df_btc["close"].iloc[-3]
+    c3 = (df_btc["close"].iloc[-3] - df_btc["close"].iloc[-4]) / df_btc["close"].iloc[-4]
+
+    cambio_3h = (df_btc["close"].iloc[-1] - df_btc["close"].iloc[-4]) / df_btc["close"].iloc[-4]
+
+    if cambio_3h > 0:
+        acelerando = c1 >= c2 >= c3
+    else:
+        acelerando = c1 <= c2 <= c3
+
+    # Momentum clásico (vela 1H ≥1.5%)
+    if abs(c1) >= 0.015:
+        return True, c1
+
+    # Momentum acumulado (3H ≥2.5% con aceleración)
+    if abs(cambio_3h) >= 0.025 and acelerando:
+        return True, cambio_3h
+
+    return False, 0.0
+
+
 def _trade_ema_rsi(simbolo, t, pc, df_4h):
     """Nueva estrategia: EMA21 + EMA89 + RSI14 en 4H (mas simple y medible)."""
     if len(df_4h) < 90:
@@ -2478,23 +2528,28 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     rsi = calcular_rsi(df_1h)
     adx = calcular_adx(df_1h)
 
+    # vol_ma20 sobre 1H para detección de sesión muerta (v6)
+    try:
+        vol_ma20       = float(df_1h["volume"].rolling(20).mean().iloc[-1])
+        volumen_actual = float(df_1h["volume"].iloc[-1])
+    except Exception:
+        vol_ma20       = 0.0
+        volumen_actual = 0.0
+
     log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} | RSI 1H={rsi:.1f} ADX 1H={adx:.1f}")
 
     # EMA89 pendiente (para confirmar estructura LONG)
     ema89_prev = df_4h["close"].ewm(span=89, adjust=False).mean().iloc[-5]
 
-    # ── MOMENTUM FILTER — BTC ±2% en 1H ──────────────────────────────────────
+    # ── MOMENTUM FILTER v6 — clásico (1H ≥1.5%) + acumulado (3H ≥2.5% acelerando) ──
     modo_momentum = False
     btc_mov_pct = 0.0
     try:
-        df_btc = velas("XBTUSDTM", "60", 5)
-        if not df_btc.empty and len(df_btc) >= 2:
-            btc_c0 = float(df_btc["close"].iloc[-1])
-            btc_c1 = float(df_btc["close"].iloc[-2])
-            btc_mov_pct = (btc_c0 - btc_c1) / btc_c1
-            if abs(btc_mov_pct) >= 0.015:
-                modo_momentum = True
-                log.info(f"{simbolo} — MOMENTUM ACTIVO: BTC movió {btc_mov_pct*100:.1f}% en 1H → filtros relajados")
+        df_btc = velas("XBTUSDTM", "60", 10)
+        if not df_btc.empty:
+            modo_momentum, btc_mov_pct = detectar_momentum_btc(df_btc)
+            if modo_momentum:
+                log.info(f"{simbolo} — MOMENTUM ACTIVO: BTC movió {btc_mov_pct*100:.2f}%")
     except Exception as e:
         log.warning(f"Momentum BTC error: {e}")
 
@@ -2621,51 +2676,69 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
         return
 
-    # ── Filtro IA Pro: flags robustos + veto + score dinamico ─────────────────
+    # ── Filtro IA Pro v6 — flags REALES (datos) + flags IA (texto robusto) ────
     ia_score  = ia["confianza"]
     ia_reason = ia["razon"].lower()
 
-    sobrecompra = any(x in ia_reason for x in [
-        "sobrecompr", "overbought", "rsi alto", "rsi elevado",
-        "rsi 4h alto", "extendido", "extended"
-    ])
-    fear_extremo = any(x in ia_reason for x in [
-        "fear & greed extremo", "extreme greed", "greed extremo", "codicia extrema"
-    ])
-    macro_negativo = any(x in ia_reason for x in [
-        "noticias btc negativas", "macro negativo", "sentimiento negativo", "bearish news"
-    ])
-    sesion_muerta = any(x in ia_reason for x in [
-        "sesion inactiva", "sesión inactiva", "low volume", "baja liquidez", "poco volumen"
+    modo_str = "MOMENTUM" if modo_momentum else "SMC"
+    log.info(f"{simbolo} | MODO: {modo_str} | BTC: {btc_mov_pct:.2%} | RSI: {rsi:.1f}")
+    log.info(f"{simbolo} | IA Score: {ia_score}")
+
+    es_long = (t == "alcista")
+
+    fear_greed_value     = obtener_fear_greed_valor()
+    perfil_macro         = obtener_perfil_macro_cacheado()
+    evento_macro_proximo = estado.get("pausa_macro", False)
+
+    # FLAGS REALES (datos duros)
+    sobrecompra_real    = rsi > 75
+    fear_extremo_real   = (fear_greed_value > 80) if es_long else (fear_greed_value < 20)
+    sesion_muerta_real  = (volumen_actual < vol_ma20 * 0.6) if vol_ma20 > 0 else False
+    macro_negativo_real = evento_macro_proximo and perfil_macro not in ["A", "B"]
+
+    # FLAGS IA (texto limpio, sin "rsi alto", direccional)
+    sobrecompra_ia = any(x in ia_reason for x in ["sobrecomprado", "overbought"])
+    if es_long:
+        fear_extremo_ia = any(x in ia_reason for x in ["fear & greed extremo", "extreme greed"])
+    else:
+        fear_extremo_ia = any(x in ia_reason for x in ["fear & greed extremo", "extreme fear"])
+    macro_ia = any(x in ia_reason for x in ["noticias negativas", "macro negativo", "bearish news"])
+    sesion_ia = any(x in ia_reason for x in [
+        "sesión muerta", "sesión inactiva",
+        "low volume", "volumen bajo",
+        "mercado lento", "baja actividad"
     ])
 
+    # COMBINACIÓN CONSERVADORA (real OR IA)
+    sobrecompra    = sobrecompra_real or sobrecompra_ia
+    fear_extremo   = fear_extremo_real or fear_extremo_ia
+    macro_negativo = macro_negativo_real or macro_ia
+    sesion_muerta  = sesion_muerta_real or sesion_ia
+
+    # BLOQUEO FUERTE (ambos modos)
+    if (sobrecompra and fear_extremo) or (macro_negativo and sesion_muerta):
+        log.info(f"{simbolo} ❌ BLOQUEADO | SC={sobrecompra} FE={fear_extremo} M={macro_negativo} SM={sesion_muerta}")
+        return
+
+    # THRESHOLD DINÁMICO POR MODO
     min_score = 65
-    bloquear  = False
-
     if modo_momentum:
-        # Momentum: mas flexible, sin bloqueo total
-        if sobrecompra or fear_extremo:
-            min_score = 70
         if macro_negativo:
             min_score = 75
+        elif sobrecompra or fear_extremo:
+            min_score = 70
+        # sesion_muerta NO afecta en momentum
     else:
-        # SMC normal: modo defensivo
-        if sobrecompra and fear_extremo:
-            bloquear = True
-        if macro_negativo and sesion_muerta:
-            bloquear = True
-        if sobrecompra or fear_extremo or macro_negativo:
+        if sobrecompra or fear_extremo or macro_negativo or sesion_muerta:
             min_score = 75
 
-    if bloquear:
-        log.info(f"{simbolo} — VETADO por IA Pro | MODO: SMC | flags: sobrecompra={sobrecompra} fear={fear_extremo} macro={macro_negativo} sesion={sesion_muerta} | {ia_reason}")
-        return
+    log.info(f"{simbolo} | Flags → SC:{sobrecompra} FE:{fear_extremo} M:{macro_negativo} SM:{sesion_muerta} | Min: {min_score}%")
 
     if ia_score < min_score:
-        log.info(f"{simbolo} — RECHAZADO: IA {ia_score}% < minimo {min_score}% | MODO: {'MOMENTUM' if modo_momentum else 'SMC'} | {ia_reason}")
+        log.info(f"{simbolo} ❌ IA {ia_score}% < {min_score}% | MODO: {modo_str}")
         return
 
-    log.info(f"{simbolo} — IA APRUEBA {ia_score}% (min={min_score}%) | MODO: {'MOMENTUM' if modo_momentum else 'SMC'} — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
+    log.info(f"{simbolo} ✅ IA APRUEBA {ia_score}% (min={min_score}%) | MODO: {modo_str} — EJECUTANDO {'LONG' if es_long else 'SHORT'}")
     abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v, atr=atr, modo_momentum=modo_momentum)
 
 
