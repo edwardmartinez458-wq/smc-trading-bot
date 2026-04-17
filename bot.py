@@ -123,13 +123,18 @@ estado = {
     "sl_diario_activo":  False,
     "historial_pnl":     [],  # Ultimos 7 dias de PnL
     "pausa_macro":       False,  # Pausa automatica por evento macro USD HIGH
+    "ops_perdidas":      0,
+    "pnl_acumulado":     0.0,
+    "mejor_trade":       0.0,
+    "peor_trade":        0.0,
 }
 lock = threading.Lock()
 
 # ─── PERSISTENCIA DE ESTADO ──────────────────────────────────────────────────
 _PERSIST_PATH = "estado_persistente.json"
 _CAMPOS_PERSIST = [
-    "ciclo", "ops_total", "ops_ganadas", "capital_inicial",
+    "ciclo", "ops_total", "ops_ganadas", "ops_perdidas", "pnl_acumulado",
+    "mejor_trade", "peor_trade", "capital_inicial",
     "perdidas_seguidas", "circuit_breaker", "sl_diario_activo",
     "capital_inicio_dia", "fecha_inicio_dia",  # daily stop persistente
 ]
@@ -2264,6 +2269,7 @@ def _cerrar_posicion(p: dict, pc: float):
         else:
             # Posiciones recuperadas no cuentan como pérdida para circuit breaker
             if p.get("tipo") != "recuperada":
+                estado["ops_perdidas"] += 1
                 estado["perdidas_seguidas"] += 1
                 # ── Cooldown global tras loss (refactor mono-bot) ────────────
                 if pnl < 0:
@@ -2277,6 +2283,14 @@ def _cerrar_posicion(p: dict, pc: float):
         ops_g = estado["ops_ganadas"]
         cap   = estado["capital"]
 
+    # Actualizar estadísticas persistentes
+    with lock:
+        estado["pnl_acumulado"] = round(estado.get("pnl_acumulado", 0.0) + pnl, 2)
+        if pnl > estado.get("mejor_trade", 0.0):
+            estado["mejor_trade"] = pnl
+        if pnl < estado.get("peor_trade", 0.0):
+            estado["peor_trade"] = pnl
+
     guardar_historial(p["simbolo"], p["dir"], p["entrada"], pc,
                       pnl, resultado, p.get("confianza_ia", 0))
     guardar_memoria_trade(p, pc, resultado, pnl)
@@ -2284,8 +2298,9 @@ def _cerrar_posicion(p: dict, pc: float):
 
     wr = ops_g / ops_t * 100 if ops_t else 0
     signo = "+" if pnl > 0 else ""
+    ops_p = estado.get("ops_perdidas", 0)
     tg(f"{'✅' if tp_ok else '🔴'} {p['simbolo']} {resultado} {signo}${pnl:.2f} USDT\n"
-       f"Capital: ${cap:.2f} | WR: {wr:.0f}%")
+       f"Capital: ${cap:.2f} | W:{ops_g} L:{ops_p} WR:{wr:.0f}%")
 
     recalcular_capital()
 
@@ -2866,7 +2881,8 @@ def _enviar_reporte():
        f"Hoy: {'+' if g_dia >= 0 else ''}{g_dia:.2f} ({'+' if pct_dia >= 0 else ''}{pct_dia:.1f}%)\n"
        f"{ayer_txt}"
        f"Total desde inicio: {'+' if g >= 0 else ''}{g:.2f} ({'+' if pct >= 0 else ''}{pct:.1f}%)\n"
-       f"Win Rate: {wr:.0f}% ({ops_g}/{ops_t} ops)\n"
+       f"Win Rate: {wr:.0f}% | W:{ops_g} L:{estado.get('ops_perdidas',0)} ({ops_t} ops)\n"
+       f"PnL acumulado: {'+' if estado.get('pnl_acumulado',0)>=0 else ''}${estado.get('pnl_acumulado',0):.2f} | Mejor: +${estado.get('mejor_trade',0):.2f} | Peor: ${estado.get('peor_trade',0):.2f}\n"
        f"BTC: {t_btc.upper()} | CB: {'ACTIVO' if cb else 'Normal'}\n\n"
        f"Posiciones abiertas:\n{pos_txt}"
        f"{hist_txt}\n\n"
