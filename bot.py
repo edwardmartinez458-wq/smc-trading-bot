@@ -832,6 +832,83 @@ def _buscar_setup_macro(titulo: str, forecast: str, previous: str) -> str:
                 f"Confirmar entrada 30 min post-dato con señales normales del bot.")
     return f"\n📊 {clave} — sin edge en playbook.{hist}"
 
+# ─── PERFIL MACRO A/B ────────────────────────────────────────────────────────
+
+def detectar_perfil_macro(symbol="XBTUSDTM") -> str:
+    """
+    Detecta estructura de precio de BTC antes de un evento macro.
+    Llama directamente a la API de KuCoin (independiente del ciclo principal).
+
+    PERFIL A (Reversión):
+    - Precio bajando en las últimas 18h
+    - Compresión en las últimas 6h (velas pequeñas)
+    - Última vela con intento alcista (cierre > apertura)
+
+    PERFIL B (Momentum):
+    - Tendencia alcista clara en 18h
+    - Velas impulsivas consecutivas
+    - Sin retrocesos fuertes
+
+    Retorna: "A", "B" o "NONE"
+    """
+    try:
+        fin = datetime.now(timezone.utc)
+        ini = fin - timedelta(hours=26)
+        r = requests.get(
+            f"{BASE_URL}/api/v1/kline/query",
+            params={
+                "symbol":      symbol,
+                "granularity": 60,
+                "from":        int(ini.timestamp() * 1000),
+                "to":          int(fin.timestamp() * 1000),
+            },
+            timeout=15
+        )
+        data = r.json().get("data", [])
+        if not data or len(data) < 20:
+            log.warning(f"detectar_perfil_macro: datos insuficientes ({len(data)} velas)")
+            return "NONE"
+
+        import pandas as pd
+        cols = ["time","open","high","low","close","volume"]
+        df = pd.DataFrame(data, columns=cols[:len(data[0])])
+        for c in ["open","high","low","close"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df.sort_values("time").reset_index(drop=True)
+
+        # Últimas 18h y 6h
+        ultimas_18h = df.tail(18)
+        ultimas_6h  = df.tail(6)
+
+        precio_ini_18h = float(ultimas_18h["close"].iloc[0])
+        precio_fin_18h = float(ultimas_18h["close"].iloc[-1])
+        drift_18h = (precio_fin_18h - precio_ini_18h) / precio_ini_18h * 100
+
+        # Compresión: rango promedio últimas 6h vs 18h
+        rango_18h = float((df.tail(18)["high"] - df.tail(18)["low"]).mean())
+        rango_6h  = float((ultimas_6h["high"]  - ultimas_6h["low"]).mean())
+        compresion = (rango_6h / rango_18h) if rango_18h > 0 else 1.0
+
+        # Última vela
+        ultima = df.iloc[-1]
+        giro_alcista = float(ultima["close"]) > float(ultima["open"])
+
+        log.info(f"[MACRO PERFIL] drift_18h={drift_18h:.2f}% compresion={compresion:.2f} giro_alcista={giro_alcista}")
+
+        # PERFIL A: caída + compresión + giro
+        if drift_18h < -1.0 and compresion < 0.60 and giro_alcista:
+            return "A"
+
+        # PERFIL B: momentum alcista sin debilidad
+        if drift_18h > 3.0 and compresion >= 0.60:
+            return "B"
+
+        return "NONE"
+
+    except Exception as e:
+        log.warning(f"detectar_perfil_macro error: {e}")
+        return "NONE"
+
 # ─── AUTO-GUARDADO MACRO ──────────────────────────────────────────────────────
 
 MEMORIA_MACRO_FILE = "memoria_macro.json"
@@ -1035,19 +1112,42 @@ def monitor_calendario_macro():
 
             if en_pausa and not estaba and evento_activo:
                 delta_min = (evento_activo["dt_utc"] - ahora).total_seconds() / 60
+                tipo_ev   = _tipo_evento(evento_activo["titulo"]) or ""
                 setup_txt = _buscar_setup_macro(
                     evento_activo["titulo"],
                     evento_activo.get("forecast",""),
                     evento_activo.get("previous","")
                 )
-                if delta_min > 0:
-                    tg(f"⏸️ PAUSA MACRO — {evento_activo['titulo']} en {int(delta_min)} min\n"
-                       f"Bot suspende nuevas entradas hasta 30 min despues del dato."
-                       f"{setup_txt}")
+
+                # ── Filtro inteligente solo para CPI / CORE_CPI / FOMC ────────
+                if tipo_ev in ("CPI", "CORE_CPI", "FOMC"):
+                    perfil = detectar_perfil_macro()
+                    log.info(f"[MACRO] {tipo_ev} | Perfil BTC: {perfil}")
+                    hay_setup = bool(setup_txt and "SETUP DETECTADO" in setup_txt)
+
+                    if perfil in ("A", "B") and hay_setup:
+                        # Edge confirmado → NO pausar
+                        with lock:
+                            estado["pausa_macro"] = False
+                        tg(f"MACRO ACTIVO: {tipo_ev}\n"
+                           f"Perfil: {perfil} | Setup: OK\n"
+                           f"Bot ACTIVO — edge confirmado{setup_txt}")
+                    else:
+                        # Sin edge → mantener pausa
+                        tg(f"MACRO SIN EDGE: {tipo_ev}\n"
+                           f"Perfil: {perfil} | Setup: {'OK' if hay_setup else 'sin edge'}\n"
+                           f"Bot en pausa")
                 else:
-                    tg(f"⏸️ PAUSA MACRO — {evento_activo['titulo']} publicado hace {int(-delta_min)} min\n"
-                       f"Esperando ventana de reaccion (30 min post-dato)."
-                       f"{setup_txt}")
+                    # NFP, PPI y otros → pausa normal
+                    if delta_min > 0:
+                        tg(f"⏸️ PAUSA MACRO — {evento_activo['titulo']} en {int(delta_min)} min\n"
+                           f"Bot suspende nuevas entradas hasta 30 min despues del dato."
+                           f"{setup_txt}")
+                    else:
+                        tg(f"⏸️ PAUSA MACRO — {evento_activo['titulo']} publicado hace {int(-delta_min)} min\n"
+                           f"Esperando ventana de reaccion (30 min post-dato)."
+                           f"{setup_txt}")
+
             elif not en_pausa and estaba:
                 tg("▶️ PAUSA MACRO levantada — Bot reanuda entradas normales.")
 
