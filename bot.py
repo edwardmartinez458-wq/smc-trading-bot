@@ -2506,19 +2506,51 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
         return
 
-    # Filtro Fear & Greed dinamico
-    try:
-        fg_raw = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5).json()
-        fg_val = int(fg_raw["data"][0]["value"])
-    except Exception:
-        fg_val = 50  # neutro si falla la API
-    umbral_fg = 65
-    if ia["confianza"] < umbral_fg:
-        log.info(f"{simbolo} — RECHAZADO: F&G={fg_val} → umbral IA={umbral_fg}% | confianza={ia['confianza']}%")
-        return
-    log.info(f"{simbolo} — F&G={fg_val} → umbral={umbral_fg}% OK | confianza={ia['confianza']}%")
+    # ── Filtro IA Pro: flags robustos + veto + score dinamico ─────────────────
+    ia_score  = ia["confianza"]
+    ia_reason = ia["razon"].lower()
 
-    log.info(f"{simbolo} — IA APRUEBA {ia['confianza']}% — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
+    sobrecompra = any(x in ia_reason for x in [
+        "sobrecompr", "overbought", "rsi alto", "rsi elevado",
+        "rsi 4h alto", "extendido", "extended"
+    ])
+    fear_extremo = any(x in ia_reason for x in [
+        "fear & greed extremo", "extreme greed", "greed extremo", "codicia extrema"
+    ])
+    macro_negativo = any(x in ia_reason for x in [
+        "noticias btc negativas", "macro negativo", "sentimiento negativo", "bearish news"
+    ])
+    sesion_muerta = any(x in ia_reason for x in [
+        "sesion inactiva", "sesión inactiva", "low volume", "baja liquidez", "poco volumen"
+    ])
+
+    min_score = 65
+    bloquear  = False
+
+    if modo_momentum:
+        # Momentum: mas flexible, sin bloqueo total
+        if sobrecompra or fear_extremo:
+            min_score = 70
+        if macro_negativo:
+            min_score = 75
+    else:
+        # SMC normal: modo defensivo
+        if sobrecompra and fear_extremo:
+            bloquear = True
+        if macro_negativo and sesion_muerta:
+            bloquear = True
+        if sobrecompra or fear_extremo or macro_negativo:
+            min_score = 75
+
+    if bloquear:
+        log.info(f"{simbolo} — VETADO por IA Pro | MODO: SMC | flags: sobrecompra={sobrecompra} fear={fear_extremo} macro={macro_negativo} sesion={sesion_muerta} | {ia_reason}")
+        return
+
+    if ia_score < min_score:
+        log.info(f"{simbolo} — RECHAZADO: IA {ia_score}% < minimo {min_score}% | MODO: {'MOMENTUM' if modo_momentum else 'SMC'} | {ia_reason}")
+        return
+
+    log.info(f"{simbolo} — IA APRUEBA {ia_score}% (min={min_score}%) | MODO: {'MOMENTUM' if modo_momentum else 'SMC'} — EJECUTANDO {'LONG' if t == 'alcista' else 'SHORT'}")
     abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v, atr=atr, modo_momentum=modo_momentum)
 
 
