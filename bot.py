@@ -1602,17 +1602,57 @@ def analizar_aprendizaje() -> dict:
         def pnl_total(trades):
             return round(sum(t["pnl_usdt"] for t in trades), 2)
 
+        # ── Wilson LB (90% confianza) + shrinkage bayesiano (k=5) ─────────
+        # Wilson LB: borde inferior del WR con 90% confianza. Si >50% hay
+        # evidencia estadística de edge real. Más conservador que WR crudo.
+        # Shrinkage: "empuja" WR hacia 50% proporcional a N chico. Evita
+        # sobreestimar rachas con muestras pequeñas.
+        def wilson_lb(trades, z=1.645):
+            n = len(trades)
+            if n == 0: return 0.0
+            w = sum(1 for t in trades if t["pnl_usdt"] > 0)
+            p = w / n
+            den = 1 + z*z/n
+            centro = p + z*z/(2*n)
+            margen = z * ((p*(1-p)/n + z*z/(4*n*n)) ** 0.5)
+            return round((centro - margen) / den * 100, 1)
+
+        def wr_shrunk(trades, k=5):
+            n = len(trades)
+            if n == 0: return 50.0
+            w = sum(1 for t in trades if t["pnl_usdt"] > 0)
+            return round((w + k*0.5) / (n + k) * 100, 1)
+
+        def confidence_label(trades, k=5):
+            if len(trades) == 0: return "sin datos"
+            delta = wr_shrunk(trades, k) - wr(trades)
+            if delta < -3:   return "baja confianza por N chico"
+            if abs(delta) <= 1: return "sin cambio material"
+            if delta > 1:    return "sube confianza"
+            return "ajuste menor"
+
         stats = {
-            "trades":          len(memoria),
-            "win_rate_global": wr(memoria),
-            "pnl_total":       pnl_total(memoria),
+            "trades":           len(memoria),
+            "win_rate_global":  wr(memoria),
+            "wr_shrunk_global": wr_shrunk(memoria),
+            "wilson_lb_global": wilson_lb(memoria),
+            "pnl_total":        pnl_total(memoria),
         }
 
         # Por par
         pares = {}
         for t in memoria:
             pares.setdefault(t["simbolo"], []).append(t)
-        stats["por_par"] = {s: {"trades": len(v), "win_rate": wr(v), "pnl": pnl_total(v)} for s, v in pares.items()}
+        stats["por_par"] = {
+            s: {
+                "trades":           len(v),
+                "win_rate":         wr(v),
+                "wr_shrunk":        wr_shrunk(v),
+                "wilson_lb":        wilson_lb(v),
+                "confidence_label": confidence_label(v),
+                "pnl":              pnl_total(v),
+            } for s, v in pares.items()
+        }
 
         # Por rango RSI
         def rsi_rango(v):
