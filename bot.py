@@ -2156,64 +2156,6 @@ def _cerrar_posicion(p: dict, pc: float):
             tg(f"✅ TP1 {p['simbolo']} {p['dir']} +${pnl_parcial:.2f} USDT\nSL → breakeven | TRAILING ATR activo — dejando correr 50% restante")
             return
 
-    # ── ASEGURAR GANANCIA POR USDT ABSOLUTO (pre-TP1) ─────────────────────
-    # Dispara si PnL no realizado ≥ 1.2% del capital ANTES de tocar TP1.
-    # Evita que trades de +5 USDT regresen a 0/negativo.
-    if not p.get("tp1_hit", False) and not p.get("asegurado_usdt", False):
-        mult_ag = obtener_multiplicador(p["simbolo"])
-        cant_total_ag = p.get("cantidad", 1)
-        pnl_actual_ag = round((pc - p["entrada"]) * cant_total_ag * mult_ag, 2) if p["dir"] == "LONG" \
-                        else round((p["entrada"] - pc) * cant_total_ag * mult_ag, 2)
-        with lock:
-            cap_actual_ag = estado["capital"]
-        umbral_ag = cap_actual_ag * 0.012  # 1.2% del capital
-        if pnl_actual_ag >= umbral_ag:
-            try:
-                # Cerrar 50% de la posición (reduce-only market)
-                cant_cerrar_ag = max(1, int(cant_total_ag * 0.5))
-                cant_restante_ag = cant_total_ag - cant_cerrar_ag
-                close_s_ag = "sell" if p["dir"] == "LONG" else "buy"
-                kc_post("/api/v1/orders", {
-                    "clientOid":  f"ag_{int(time.time()*1000)}",
-                    "symbol":     p["simbolo"],
-                    "side":       close_s_ag,
-                    "type":       "market",
-                    "size":       cant_cerrar_ag,
-                    "reduceOnly": True,
-                })
-                pnl_parcial_ag = round((pc - p["entrada"]) * cant_cerrar_ag * mult_ag, 2) if p["dir"] == "LONG" \
-                                 else round((p["entrada"] - pc) * cant_cerrar_ag * mult_ag, 2)
-                # Cancelar SL anterior y colocar nuevo SL en breakeven para el resto
-                if p.get("sl_oid"):
-                    kc_delete(f"/api/v1/orders/{p['sl_oid']}")
-                nuevo_sl_oid_ag = f"slag_{int(time.time()*1000)}"
-                kc_post("/api/v1/orders", {
-                    "clientOid":     nuevo_sl_oid_ag,
-                    "symbol":        p["simbolo"],
-                    "side":          close_s_ag,
-                    "type":          "market",
-                    "stop":          "down" if p["dir"] == "LONG" else "up",
-                    "stopPrice":     str(p["entrada"]),
-                    "stopPriceType": "MP",
-                    "size":          cant_restante_ag,
-                    "reduceOnly":    True,
-                })
-                PARES_SIN_TRAILING_AG = {"INJUSDTM", "AVAXUSDTM"}
-                with lock:
-                    p["asegurado_usdt"]  = True
-                    p["cantidad"]        = cant_restante_ag
-                    p["sl"]              = p["entrada"]
-                    p["sl_oid"]          = nuevo_sl_oid_ag
-                    p["trailing_activo"] = p["simbolo"] not in PARES_SIN_TRAILING_AG
-                    estado["capital"]   += pnl_parcial_ag
-                log.warning(f"{p['simbolo']} 🟢 ASEGURADO USDT +${pnl_parcial_ag:.2f} (≥1.2% cap) | SL → breakeven")
-                tg(f"🟢 GANANCIA ASEGURADA {p['simbolo']} {p['dir']}\n"
-                   f"+${pnl_parcial_ag:.2f} USDT (50% cerrado)\n"
-                   f"SL → breakeven | 50% restante con trailing ATR")
-                return
-            except Exception as e:
-                log.error(f"{p['simbolo']} asegurar USDT error: {e}")
-
     tp_ok = (p["dir"] == "LONG" and pc >= p["tp"]) or (p["dir"] == "SHORT" and pc <= p["tp"])
     sl_ok = (p["dir"] == "LONG" and pc <= p["sl"]) or (p["dir"] == "SHORT" and pc >= p["sl"])
 
