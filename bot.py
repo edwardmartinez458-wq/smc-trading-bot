@@ -882,7 +882,7 @@ def detectar_perfil_macro(symbol="XBTUSDTM") -> str:
             return "NONE"
 
         import pandas as pd
-        cols = ["time","open","high","low","close","volume"]
+        cols = ["time","open","high","low","close","volume","turnover"]
         df = pd.DataFrame(data, columns=cols[:len(data[0])])
         for c in ["open","high","low","close"]:
             df[c] = pd.to_numeric(df[c], errors="coerce")
