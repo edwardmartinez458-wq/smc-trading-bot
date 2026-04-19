@@ -57,7 +57,7 @@ BASE_URL       = "https://api-futures.kucoin.com"
 MAX_POSICIONES_GLOBALES = 3     # hasta 3 simultáneas (3 × 15% = 45% exposición)
 MAX_POR_GRUPO           = 3     # sin restricción práctica por correlación
 MAX_EXPOSICION_TOTAL    = 0.45  # máx 45% del equity en margen comprometido simultáneo
-COOLDOWN_TRAS_LOSS_MIN  = 45    # minutos de bloqueo global tras un trade perdedor
+COOLDOWN_TRAS_LOSS_MIN  = 180   # minutos de bloqueo global tras un trade perdedor (3h)
 
 # Grupo correlacionado alts L1: todos se mueven con BTC (ρ > 0.80 diario)
 CORRELATED_GROUPS = {
@@ -65,7 +65,7 @@ CORRELATED_GROUPS = {
 }
 
 # Stop loss global diario: si el capital cae mas de 5% en el dia -> pausar
-SL_DIARIO_PCT  = 0.05  # 5% diario — NO subir mientras capital_pct=0.15
+SL_DIARIO_PCT  = 0.03  # 3% diario
 
 # Wilson LB — filtro estadístico por par (backtest N=30 ganó)
 WILSON_MIN_N  = 30     # trades mínimos antes de activar el filtro
@@ -2675,8 +2675,8 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         if ema21_v >= ema89_v:
             log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin tendencia bajista 4H)")
             return
-        if not (20 <= rsi <= 65):
-            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (20-65)")
+        if not (25 <= rsi <= 55):
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (25-55)")
             return
         if close_now >= close_prev:
             log.info(f"{simbolo} — RECHAZADO: sin impulso bajista (close >= close_prev)")
