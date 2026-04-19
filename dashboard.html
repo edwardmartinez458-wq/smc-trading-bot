@@ -400,6 +400,13 @@
   .wp-status.ok   { color: var(--green); }
   .wp-status.warn { color: var(--warn); }
   .wp-status.bad  { color: var(--red); }
+  .wp-btns { display: flex; gap: 4px; margin-top: 6px; }
+  .wp-btn  { flex: 1; font-size: 0.52rem; font-weight: 700; padding: 3px 0;
+             border-radius: 5px; border: 1px solid; cursor: pointer; transition: all 0.2s; letter-spacing: 0.04em; }
+  .wp-btn-w { background: var(--green-dim); border-color: rgba(0,230,118,0.35); color: var(--green); }
+  .wp-btn-w:hover { background: rgba(0,230,118,0.2); border-color: var(--green); }
+  .wp-btn-l { background: var(--red-dim);   border-color: rgba(255,77,109,0.35);  color: var(--red); }
+  .wp-btn-l:hover { background: rgba(255,77,109,0.18); border-color: var(--red); }
 
   /* ── SEPARADOR BOTS ──────────────────────────────────── */
   .bots-divider {
@@ -1128,6 +1135,10 @@
         <div class="wp-lb ${cls}">LB ${lbPct}%  <span style="font-size:0.55rem;font-weight:400;color:var(--muted)">WR ${wr.toFixed(0)}%</span></div>
         <div class="wp-bar"><div class="wp-fill ${cls}" style="width:${fillW}%"></div></div>
         <div class="wp-status ${cls}">${label}</div>
+        <div class="wp-btns">
+          <button class="wp-btn wp-btn-w" onclick="wilsonManual('${par}','W')">✅ +WIN</button>
+          <button class="wp-btn wp-btn-l" onclick="wilsonManual('${par}','L')">❌ +LOSS</button>
+        </div>
       </div>`;
     }).join('');
   }
@@ -1264,6 +1275,28 @@
         </div>`;
       }).join('');
     } catch(e) {}
+  }
+
+  // ── Wilson Manual (+W / +L desde TradingView review) ────
+  async function wilsonManual(par, resultado) {
+    if (!CT_URL) { showNotif('CT_URL no configurada', 'var(--warn)'); return; }
+    const icono = resultado === 'W' ? '✅' : '❌';
+    if (!confirm(`${icono} Agregar ${resultado === 'W' ? 'WIN' : 'LOSS'} a ${par} en Wilson CT?\n\nUsalo solo después de revisar la señal en TradingView.`)) return;
+    try {
+      const r = await fetch(CT_URL + '/api/wilson_manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ par, resultado })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        showNotif(`${icono} ${par} — ${d.wins}W/${d.trades - d.wins}L | LB ${(d.lb*100).toFixed(0)}%`,
+                  resultado === 'W' ? 'var(--green)' : 'var(--red)');
+        setTimeout(() => cargarEstadoCT(), 1000);
+      } else {
+        showNotif(`Error: ${d.error}`, 'var(--red)');
+      }
+    } catch(e) { showNotif('Error conectando CT', 'var(--red)'); }
   }
 
   // ── Controles CT ─────────────────────────────────────
