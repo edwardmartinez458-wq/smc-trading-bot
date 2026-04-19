@@ -36,12 +36,12 @@ COINGLASS_API_KEY  = os.getenv("COINGLASS_API_KEY", "")
 
 # Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
-    "SOLUSDTM",    # WR 82.6% — #1 backtest CT v6
-    "ATOMUSDTM",   # WR 73.9% — #2 backtest CT v6
-    "ARBUSDTM",    # WR 69.6% — #3 backtest CT v6
-    "ICPUSDTM",    # WR 66.7% — #4 backtest CT v6
-    "POLUSDTM",    # WR 61.9% — #5 backtest CT v6
-    "INJUSDTM",    # WR 59.1% — #6 backtest CT v6
+    "POLUSDTM",    # WR 55% — backtest Momentum Dic-Abr 2026
+    "XRPUSDTM",    # WR 55% — backtest Momentum Dic-Abr 2026
+    "ATOMUSDTM",   # WR 50% — backtest Momentum Dic-Abr 2026
+    "DOTUSDTM",    # WR 50% — backtest Momentum Dic-Abr 2026
+    "ICPUSDTM",    # WR 40% — backtest Momentum Dic-Abr 2026
+    "SUIUSDTM",    # WR 40% — backtest Momentum Dic-Abr 2026
 ]
 
 PARES_SOLO_LONG = []  # todos los pares operan bidireccional
@@ -61,11 +61,17 @@ COOLDOWN_TRAS_LOSS_MIN  = 45    # minutos de bloqueo global tras un trade perded
 
 # Grupo correlacionado alts L1: todos se mueven con BTC (ρ > 0.80 diario)
 CORRELATED_GROUPS = {
-    "alts_l1": {"SOLUSDTM", "ATOMUSDTM", "ARBUSDTM", "ICPUSDTM", "POLUSDTM", "INJUSDTM"},
+    "alts_l1": {"POLUSDTM", "XRPUSDTM", "ATOMUSDTM", "DOTUSDTM", "ICPUSDTM", "SUIUSDTM"},
 }
 
 # Stop loss global diario: si el capital cae mas de 5% en el dia -> pausar
 SL_DIARIO_PCT  = 0.05  # 5% diario — NO subir mientras capital_pct=0.15
+
+# Wilson LB — filtro estadístico por par (backtest N=30 ganó)
+WILSON_MIN_N  = 30     # trades mínimos antes de activar el filtro
+WILSON_MIN_LB = 0.38   # límite inferior Wilson (95% confianza)
+WILSON_Z      = 1.64
+_WILSON_PATH  = "wilson_stats.json"
 
 # Ciclo aleatorio entre 5 y 15 minutos
 CICLO_MIN_SEG  = 5 * 60
@@ -169,6 +175,54 @@ def cargar_estado_persistente():
         log.error(f"Persistencia cargar: {e}")
 
 cargar_estado_persistente()
+
+# ─── WILSON LB — estadísticas por par ────────────────────────────────────────
+def _wilson_lb(wins, n):
+    from math import sqrt
+    if n == 0: return 0.0
+    p = wins / n
+    z = WILSON_Z
+    return (p + z*z/(2*n) - z*sqrt((p*(1-p)+z*z/(4*n))/n)) / (1+z*z/n)
+
+def cargar_wilson():
+    try:
+        if os.path.exists(_WILSON_PATH):
+            with open(_WILSON_PATH) as f:
+                return json.load(f)
+    except Exception as e:
+        log.error(f"Wilson cargar: {e}")
+    return {}
+
+def guardar_wilson(stats):
+    try:
+        with open(_WILSON_PATH, "w") as f:
+            json.dump(stats, f, indent=2)
+    except Exception as e:
+        log.error(f"Wilson guardar: {e}")
+
+def wilson_permite(simbolo):
+    """Retorna True si Wilson permite operar el par."""
+    stats = cargar_wilson()
+    s = stats.get(simbolo, {"wins": 0, "trades": 0})
+    n = s["trades"]
+    if n < WILSON_MIN_N:
+        log.info(f"{simbolo} — Wilson: aprendizaje ({n}/{WILSON_MIN_N} trades)")
+        return True
+    wlb = _wilson_lb(s["wins"], n)
+    ok  = wlb >= WILSON_MIN_LB
+    log.info(f"{simbolo} — Wilson: {s['wins']}W/{n}T WLB={wlb:.3f} {'✅' if ok else '❌ BLOQUEADO'}")
+    return ok
+
+def wilson_actualizar(simbolo, gano: bool):
+    """Actualiza wins/trades del par tras cerrar un trade."""
+    stats = cargar_wilson()
+    s = stats.get(simbolo, {"wins": 0, "trades": 0})
+    s["trades"] += 1
+    if gano:
+        s["wins"] += 1
+    stats[simbolo] = s
+    guardar_wilson(stats)
+    log.info(f"{simbolo} — Wilson actualizado: {s['wins']}W/{s['trades']}T")
 
 # Posiciones cerradas recientemente por el bot (evita re-agregar en sync por 5 min)
 _cerradas_reciente = {}  # {simbolo: timestamp}
@@ -2357,6 +2411,7 @@ def _cerrar_posicion(p: dict, pc: float):
     guardar_historial(p["simbolo"], p["dir"], p["entrada"], pc,
                       pnl, resultado, p.get("confianza_ia", 0))
     guardar_memoria_trade(p, pc, resultado, pnl)
+    wilson_actualizar(p["simbolo"], pnl > 0)
     guardar_estado_persistente()
 
     wr = ops_g / ops_t * 100 if ops_t else 0
@@ -2549,237 +2604,91 @@ def detectar_momentum_btc(df_btc):
 
 
 def _trade_ema_rsi(simbolo, t, pc, df_4h):
-    """Nueva estrategia: EMA21 + EMA89 + RSI14 en 4H (mas simple y medible)."""
+    """Momentum v2: impulso propio del par — EMA21/89 4H + volumen/rango/RSI/ADX 1H."""
     if len(df_4h) < 90:
         log.info(f"{simbolo} — sin suficientes velas 4H para EMA89")
         return
 
-    # EMA21 / EMA89 en 4H — estructura de tendencia
-    ema21   = df_4h["close"].ewm(span=21, adjust=False).mean()
-    ema89   = df_4h["close"].ewm(span=89, adjust=False).mean()
-    ema21_v = ema21.iloc[-1]
-    ema89_v = ema89.iloc[-1]
+    # Tendencia 4H
+    ema21_v = df_4h["close"].ewm(span=21, adjust=False).mean().iloc[-1]
+    ema89_v = df_4h["close"].ewm(span=89, adjust=False).mean().iloc[-1]
 
-    # RSI, ADX y divergencia en 1H — mas reactivos a movimientos recientes
+    # Señales 1H
     df_1h = velas(simbolo, "60", 60)
-    if df_1h.empty or len(df_1h) < 30:
+    if df_1h.empty or len(df_1h) < 25:
         log.info(f"{simbolo} — sin suficientes velas 1H")
         return
-    rsi = calcular_rsi(df_1h)
-    adx = calcular_adx(df_1h)
 
-    # vol_ma20 sobre 1H para detección de sesión muerta (v6)
+    rsi        = calcular_rsi(df_1h)
+    adx        = calcular_adx(df_1h)
+    vol        = float(df_1h["volume"].iloc[-1])
+    vol_avg    = float(df_1h["volume"].rolling(20).mean().iloc[-1])
+    rng        = float(df_1h["high"].iloc[-1] - df_1h["low"].iloc[-1])
+    rng_avg    = float((df_1h["high"] - df_1h["low"]).rolling(20).mean().iloc[-1])
+    close_now  = float(df_1h["close"].iloc[-1])
+    close_prev = float(df_1h["close"].iloc[-2])
+
+    log.info(f"{simbolo} — EMA21={ema21_v:.4f} EMA89={ema89_v:.4f} | RSI={rsi:.1f} ADX={adx:.1f} | Vol={vol:.0f}/avg={vol_avg:.0f} | Rng={rng:.4f}/avg={rng_avg:.4f}")
+
+    # Filtro BTC — no operar si BTC mueve > 3.5% en la última vela 1H
     try:
-        vol_ma20       = float(df_1h["volume"].rolling(20).mean().iloc[-1])
-        volumen_actual = float(df_1h["volume"].iloc[-1])
-    except Exception:
-        vol_ma20       = 0.0
-        volumen_actual = 0.0
-
-    log.info(f"{simbolo} — EMA21=${ema21_v:.4f} EMA89=${ema89_v:.4f} | RSI 1H={rsi:.1f} ADX 1H={adx:.1f}")
-
-    # EMA89 pendiente (para confirmar estructura LONG)
-    ema89_prev = df_4h["close"].ewm(span=89, adjust=False).mean().iloc[-5]
-
-    # ── MOMENTUM FILTER v6 — clásico (1H ≥1.5%) + acumulado (3H ≥2.5% acelerando) ──
-    modo_momentum = False
-    btc_mov_pct = 0.0
-    try:
-        df_btc = velas("XBTUSDTM", "60", 10)
+        df_btc = velas("XBTUSDTM", "60", 5)
         if not df_btc.empty:
-            modo_momentum, btc_mov_pct = detectar_momentum_btc(df_btc)
-            if modo_momentum:
-                log.info(f"{simbolo} — MOMENTUM ACTIVO: BTC movió {btc_mov_pct*100:.2f}%")
+            btc_chg = abs(float(df_btc["close"].iloc[-1]) - float(df_btc["open"].iloc[-1])) / float(df_btc["open"].iloc[-1])
+            if btc_chg >= 0.035:
+                log.info(f"{simbolo} — RECHAZADO: BTC movió {btc_chg*100:.1f}% > 3.5%")
+                return
     except Exception as e:
-        log.warning(f"Momentum BTC error: {e}")
+        log.warning(f"{simbolo} — BTC filter error: {e}")
 
-    # Pares excluidos de modo momentum (APT funciona mal en momentum según backtest)
-    _PARES_SIN_MOMENTUM = {"APTUSDTM"}
-    if simbolo in _PARES_SIN_MOMENTUM and modo_momentum:
-        modo_momentum = False
-        log.info(f"{simbolo} — momentum desactivado para este par (excluido por config)")
+    # Filtros comunes
+    if adx < 20:
+        log.info(f"{simbolo} — RECHAZADO: ADX {adx:.1f} < 20")
+        return
+    if vol_avg <= 0 or rng_avg <= 0:
+        log.info(f"{simbolo} — RECHAZADO: promedios sin datos")
+        return
+    if vol < vol_avg:
+        log.info(f"{simbolo} — RECHAZADO: volumen {vol:.0f} < avg {vol_avg:.0f}")
+        return
+    if rng < rng_avg * 1.2:
+        log.info(f"{simbolo} — RECHAZADO: rango {rng:.4f} < avg*1.2 {rng_avg*1.2:.4f}")
+        return
 
-    # LONG: EMA21 > EMA89 + ambas subiendo + RSI 28-82 | ADX min 40
+    # LONG
     if t == "alcista":
-        if modo_momentum:
-            # EMAs más flexibles (0.3% tolerancia) + RSI ampliado
-            if ema21_v <= ema89_v * 0.997:
-                log.info(f"{simbolo} — RECHAZADO: EMA21 muy por debajo de EMA89 (momentum)")
-                return
-            if ema21_v <= ema21.iloc[-3]:
-                log.info(f"{simbolo} — RECHAZADO: EMA21 no sube (momentum)")
-                return
-            if rsi < 28 or rsi > 82:
-                log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango LONG momentum (28-82)")
-                return
-            # Dirección BTC debe coincidir con la señal
-            if btc_mov_pct < 0:
-                log.info(f"{simbolo} — RECHAZADO: LONG pero BTC bajó en momentum")
-                return
-        else:
-            if ema21_v <= ema89_v:
-                log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin estructura alcista 4H)")
-                return
-            if ema89_v <= ema89_prev:
-                log.info(f"{simbolo} — RECHAZADO: EMA89 no esta subiendo (tendencia debil)")
-                return
-            if rsi < 40 or rsi > 75:
-                log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango LONG (40-75)")
-                return
+        if ema21_v <= ema89_v:
+            log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin tendencia alcista 4H)")
+            return
+        if not (35 <= rsi <= 75):
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (35-75)")
+            return
+        if close_now <= close_prev:
+            log.info(f"{simbolo} — RECHAZADO: sin impulso alcista (close <= close_prev)")
+            return
 
-    # SHORT: EMA21 < EMA89 + EMA89 bajando + RSI 25-60 (o modo momentum: 18-65)
+    # SHORT
     elif t == "bajista":
         if simbolo in PARES_SOLO_LONG:
-            log.info(f"{simbolo} — RECHAZADO: par en lista SOLO_LONG, no se opera SHORT")
+            log.info(f"{simbolo} — RECHAZADO: par en lista SOLO_LONG")
             return
-        if modo_momentum:
-            if ema21_v >= ema89_v * 1.003:
-                log.info(f"{simbolo} — RECHAZADO: EMA21 muy por encima de EMA89 (momentum)")
-                return
-            if ema21_v >= ema21.iloc[-3]:
-                log.info(f"{simbolo} — RECHAZADO: EMA21 no baja (momentum)")
-                return
-            if rsi > 65 or rsi < 18:
-                log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT momentum (18-65)")
-                return
-            if btc_mov_pct > 0:
-                log.info(f"{simbolo} — RECHAZADO: SHORT pero BTC subió en momentum")
-                return
-        else:
-            if ema21_v >= ema89_v:
-                log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin estructura bajista 4H)")
-                return
-            if ema89_v >= ema89_prev:
-                log.info(f"{simbolo} — RECHAZADO: EMA89 no esta bajando (tendencia debil)")
-                return
-            if rsi > 60 or rsi < 25:
-                log.info(f"{simbolo} — RECHAZADO: RSI 1H {rsi:.1f} fuera de rango SHORT (25-60)")
-                return
-
-    # Filtro ATR minimo 4H
-    atr = calcular_atr(df_4h)
-    if atr / pc < 0.015:
-        log.info(f"{simbolo} — RECHAZADO: ATR 4H {atr/pc*100:.2f}% < 1.5%")
-        return
-
-    # ADX >= 25 (validado por backtest: +70% PnL vs ADX>20)
-    if adx < 25:
-        log.info(f"{simbolo} — RECHAZADO: ADX 1H {adx:.1f} < 25 (tendencia debil)")
-        return
-
-    # Sin divergencia RSI 1H
-    if hay_divergencia_rsi(df_1h, t):
-        log.info(f"{simbolo} — RECHAZADO: divergencia RSI 1H detectada")
-        return
-
-    # Confirmacion 15min — rebote desde EMA21 (3/3 velas + precio vs EMA21)
-    df_15m = velas(simbolo, "15", 50)
-    if df_15m.empty or len(df_15m) < 4:
-        log.info(f"{simbolo} — RECHAZADO: sin datos 15min")
-        return
-    ema21_15m  = df_15m["close"].ewm(span=21, adjust=False).mean().iloc[-1]
-    prev_low   = df_15m["low"].iloc[-2]
-    prev_high  = df_15m["high"].iloc[-2]
-    prev_close = df_15m["close"].iloc[-2]
-    c0 = df_15m["close"].iloc[-1]; o0 = df_15m["open"].iloc[-1]
-    c1 = df_15m["close"].iloc[-2]; o1 = df_15m["open"].iloc[-2]
-    c2 = df_15m["close"].iloc[-3]; o2 = df_15m["open"].iloc[-3]
-    velas_bull = sum([c0>o0, c1>o1, c2>o2])
-    velas_bear = sum([c0<o0, c1<o1, c2<o2])
-    if t == "alcista":
-        bounce = (prev_low <= ema21_15m * 1.008) and (pc > prev_close) and (pc > ema21_15m)
-        conf   = velas_bull >= 2 and pc > ema21_15m
-    else:
-        toco_ema  = (prev_high >= ema21_15m * 0.992) and (pc < ema21_15m)
-        cerca_ema = pc <= ema21_15m * 1.02
-        bounce    = (toco_ema or cerca_ema) and (pc < prev_close)
-        conf      = velas_bear >= 2 and cerca_ema
-    if not bounce:
-        log.info(f"{simbolo} — RECHAZADO: sin rebote confirmado desde EMA21 15m")
-        return
-    if not conf:
-        log.info(f"{simbolo} — RECHAZADO: 15min no confirma (2/3 velas) direccion {t}")
-        return
-
-    # ── FILTRO DISTANCIA EMA21 15m — solo en modo momentum, max 2.1% ──────────
-    if modo_momentum:
-        distancia_ema = abs(pc - ema21_15m) / ema21_15m
-        if distancia_ema > 0.021:
-            log.info(f"{simbolo} — RECHAZADO: precio ${pc:.4f} lejos {distancia_ema*100:.1f}% de EMA21 15m ${ema21_15m:.4f} (momentum max 2.1%)")
+        if ema21_v >= ema89_v:
+            log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin tendencia bajista 4H)")
+            return
+        if not (20 <= rsi <= 65):
+            log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (20-65)")
+            return
+        if close_now >= close_prev:
+            log.info(f"{simbolo} — RECHAZADO: sin impulso bajista (close >= close_prev)")
             return
 
-    log.info(f"{simbolo} — EMA 4H + RSI/ADX 1H + 15min OK — consultando IA...")
-    ob_ctx = {"zona_baja": round(pc * 0.97, 4), "zona_alta": round(pc * 1.03, 4), "valido": True, "toques": 0}
-    ia = filtro_ia(simbolo, t, pc, ob_ctx, 0)
-
-    if not ia["entrar"]:
-        log.info(f"{simbolo} — RECHAZADO por IA ({ia['confianza']}%): {ia['razon']}")
+    # Wilson — filtro estadístico final
+    if not wilson_permite(simbolo):
         return
 
-    # ── Filtro IA Pro v6 — flags REALES (datos) + flags IA (texto robusto) ────
-    ia_score  = ia["confianza"]
-    ia_reason = ia["razon"].lower()
-
-    modo_str = "MOMENTUM" if modo_momentum else "SMC"
-    log.info(f"{simbolo} | MODO: {modo_str} | BTC: {btc_mov_pct:.2%} | RSI: {rsi:.1f}")
-    log.info(f"{simbolo} | IA Score: {ia_score}")
-
-    es_long = (t == "alcista")
-
-    fear_greed_value     = obtener_fear_greed_valor()
-    perfil_macro         = obtener_perfil_macro_cacheado()
-    evento_macro_proximo = estado.get("pausa_macro", False)
-
-    # FLAGS REALES (datos duros)
-    sobrecompra_real    = rsi > 75
-    fear_extremo_real   = (fear_greed_value > 80) if es_long else (fear_greed_value < 20)
-    sesion_muerta_real  = (volumen_actual < vol_ma20 * 0.6) if vol_ma20 > 0 else False
-    macro_negativo_real = evento_macro_proximo and perfil_macro not in ["A", "B"]
-
-    # FLAGS IA (texto limpio, sin "rsi alto", direccional)
-    sobrecompra_ia = any(x in ia_reason for x in ["sobrecomprado", "overbought"])
-    if es_long:
-        fear_extremo_ia = any(x in ia_reason for x in ["fear & greed extremo", "extreme greed"])
-    else:
-        fear_extremo_ia = any(x in ia_reason for x in ["fear & greed extremo", "extreme fear"])
-    macro_ia = any(x in ia_reason for x in ["noticias negativas", "macro negativo", "bearish news"])
-    sesion_ia = any(x in ia_reason for x in [
-        "sesión muerta", "sesión inactiva",
-        "low volume", "volumen bajo",
-        "mercado lento", "baja actividad"
-    ])
-
-    # COMBINACIÓN CONSERVADORA (real OR IA)
-    sobrecompra    = sobrecompra_real or sobrecompra_ia
-    fear_extremo   = fear_extremo_real or fear_extremo_ia
-    macro_negativo = macro_negativo_real or macro_ia
-    sesion_muerta  = sesion_muerta_real or sesion_ia
-
-    # BLOQUEO FUERTE (ambos modos)
-    if (sobrecompra and fear_extremo) or (macro_negativo and sesion_muerta):
-        log.info(f"{simbolo} ❌ BLOQUEADO | SC={sobrecompra} FE={fear_extremo} M={macro_negativo} SM={sesion_muerta}")
-        return
-
-    # THRESHOLD DINÁMICO POR MODO
-    min_score = 65
-    if modo_momentum:
-        if macro_negativo:
-            min_score = 75
-        elif sobrecompra or fear_extremo:
-            min_score = 70
-        # sesion_muerta NO afecta en momentum
-    else:
-        if sobrecompra or fear_extremo or macro_negativo or sesion_muerta:
-            min_score = 75
-
-    log.info(f"{simbolo} | Flags → SC:{sobrecompra} FE:{fear_extremo} M:{macro_negativo} SM:{sesion_muerta} | Min: {min_score}%")
-
-    if ia_score < min_score:
-        log.info(f"{simbolo} ❌ IA {ia_score}% < {min_score}% | MODO: {modo_str}")
-        return
-
-    log.info(f"{simbolo} ✅ IA APRUEBA {ia_score}% (min={min_score}%) | MODO: {modo_str} — EJECUTANDO {'LONG' if es_long else 'SHORT'}")
-    abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v, atr=atr, modo_momentum=modo_momentum)
+    log.info(f"{simbolo} ✅ Momentum v2 OK — ejecutando {'LONG' if t=='alcista' else 'SHORT'}")
+    ia = {"entrar": True, "confianza": 70, "razon": "Momentum v2 — impulso propio del par"}
+    abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v)
 
 
 CICLOS_OBSERVACION = 3  # Ciclos de espera tras reinicio antes de entrar al mercado
