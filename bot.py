@@ -36,12 +36,12 @@ COINGLASS_API_KEY  = os.getenv("COINGLASS_API_KEY", "")
 
 # Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
-    "INJUSDTM",
-    "SUIUSDTM",
-    "APTUSDTM",
-    "SOLUSDTM",
-    "DOTUSDTM",
-    "AVAXUSDTM",
+    "SOLUSDTM",    # WR 82.6% — #1 backtest CT v6
+    "ATOMUSDTM",   # WR 73.9% — #2 backtest CT v6
+    "ARBUSDTM",    # WR 69.6% — #3 backtest CT v6
+    "ICPUSDTM",    # WR 66.7% — #4 backtest CT v6
+    "POLUSDTM",    # WR 61.9% — #5 backtest CT v6
+    "INJUSDTM",    # WR 59.1% — #6 backtest CT v6
 ]
 
 PARES_SOLO_LONG = []  # todos los pares operan bidireccional
@@ -61,7 +61,7 @@ COOLDOWN_TRAS_LOSS_MIN  = 45    # minutos de bloqueo global tras un trade perded
 
 # Grupo correlacionado alts L1: todos se mueven con BTC (ρ > 0.80 diario)
 CORRELATED_GROUPS = {
-    "alts_l1": {"SOLUSDTM", "INJUSDTM", "SUIUSDTM", "APTUSDTM", "DOTUSDTM", "AVAXUSDTM"},
+    "alts_l1": {"SOLUSDTM", "ATOMUSDTM", "ARBUSDTM", "ICPUSDTM", "POLUSDTM", "INJUSDTM"},
 }
 
 # Stop loss global diario: si el capital cae mas de 5% en el dia -> pausar
