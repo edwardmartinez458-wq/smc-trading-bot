@@ -36,12 +36,12 @@ COINGLASS_API_KEY  = os.getenv("COINGLASS_API_KEY", "")
 
 # Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
 PARES = [
-    "POLUSDTM",    # WR 55% — backtest Momentum Dic-Abr 2026
-    "XRPUSDTM",    # WR 55% — backtest Momentum Dic-Abr 2026
-    "ATOMUSDTM",   # WR 50% — backtest Momentum Dic-Abr 2026
-    "DOTUSDTM",    # WR 50% — backtest Momentum Dic-Abr 2026
-    "ICPUSDTM",    # WR 40% — backtest Momentum Dic-Abr 2026
-    "SUIUSDTM",    # WR 40% — backtest Momentum Dic-Abr 2026
+    "POLUSDTM",    # WR 45.7% — backtest 9 meses Jul-Abr
+    "XRPUSDTM",    # WR 34.0% — backtest 9 meses Jul-Abr
+    "ATOMUSDTM",   # WR 35.4% — backtest 9 meses Jul-Abr
+    "ICPUSDTM",    # WR 39.4% — backtest 9 meses Jul-Abr
+    "SUIUSDTM",    # WR 36.9% — backtest 9 meses Jul-Abr
+    # DOT eliminado: WR 31.4% único par perdedor en backtest
 ]
 
 PARES_SOLO_LONG = []  # todos los pares operan bidireccional
@@ -3059,22 +3059,20 @@ def verificar_inicio():
         log.critical(f"Errores de inicio: {errores}")
         raise SystemExit(1)
 
-    tg(f"🤖 SMC BOT KuCoin INICIADO (mono-bot refactor)\n\n"
+    tg(f"🤖 MOMENTUM BOT KuCoin INICIADO\n\n"
        f"Pares: {len(pares_ok)} | Capital: ${estado['capital']:.2f} USDT\n"
        f"x{estado['apalancamiento']} | Margen por trade: 15%\n"
-       f"TP1: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}%\n"
-       f"Trailing ATR: activa en TP1 (excepto INJ)\n"
-       f"Salida anticipada: -4% en primeros 30 min\n"
+       f"TP: {TP_PCT*100:.0f}% | SL: {SL_PCT*100:.0f}% | BE: 33.3%\n"
+       f"Señal: EMA21/89 4H + ADX + RSI + Vol + Rango 1H\n"
        f"Modo observacion: {CICLOS_OBSERVACION} ciclos al iniciar\n"
        f"\n━━ CONTROLES DE RIESGO ━━\n"
        f"SL diario: {SL_DIARIO_PCT*100:.0f}% (persistente)\n"
-       f"Max posiciones globales: {MAX_POSICIONES_GLOBALES} (hasta 3x15%=45% expo)\n"
+       f"Max posiciones globales: {MAX_POSICIONES_GLOBALES}\n"
        f"Max exposicion total: {MAX_EXPOSICION_TOTAL*100:.0f}% del equity\n"
        f"Cooldown tras loss: {COOLDOWN_TRAS_LOSS_MIN} min\n"
-       f"Horario: 24/7 sin bloqueo horario | Momentum RSI: activo\n"
-       f"\nMonitor macro: pausa 60 min antes de USD HIGH (ForexFactory)\n"
-       f"Ciclo: 5-15 min\n\n"
-       f"{', '.join(pares_ok)}\n\nActivo 24/7 en Railway")
+       f"Wilson: observador (acumulando experiencia)\n"
+       f"\nCiclo: 5-15 min | 24/7\n\n"
+       f"{', '.join(pares_ok)}\n\nActivo en Railway")
 
 # ─── DASHBOARD API ────────────────────────────────────────────────────────────
 
