@@ -1,8 +1,8 @@
 {
-  "POLUSDTM":  {"wins": 11, "trades": 20},
-  "XRPUSDTM":  {"wins": 11, "trades": 20},
-  "ATOMUSDTM": {"wins": 10, "trades": 20},
-  "DOTUSDTM":  {"wins": 10, "trades": 20},
-  "ICPUSDTM":  {"wins":  8, "trades": 20},
-  "SUIUSDTM":  {"wins":  8, "trades": 20}
+  "POLUSDTM":  {"wins": 15, "trades": 30},
+  "XRPUSDTM":  {"wins": 20, "trades": 40},
+  "ATOMUSDTM": {"wins": 13, "trades": 30},
+  "DOTUSDTM":  {"wins": 15, "trades": 30},
+  "ICPUSDTM":  {"wins": 15, "trades": 30},
+  "SUIUSDTM":  {"wins": 14, "trades": 30}
 }
