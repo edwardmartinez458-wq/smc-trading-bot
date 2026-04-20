@@ -2691,7 +2691,7 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v)
 
 
-CICLOS_OBSERVACION = 3  # Ciclos de espera tras reinicio antes de entrar al mercado
+CICLOS_OBSERVACION = 2  # Ciclos de espera tras reinicio antes de entrar al mercado
 
 # ─── CONTROL DE RIESGO: correlación / exposición / cooldown global ───────────
 _ultimo_loss_ts = None  # timestamp del ultimo trade cerrado en perdida (cooldown global)
