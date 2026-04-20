@@ -1121,13 +1121,13 @@
 
       // clasificar
       let cls = 'bad';
-      if (trades < 20) cls = 'warn';         // aún en aprendizaje
-      else if (lb >= 0.55) cls = 'ok';       // aprobado
+      if (trades < 30) cls = 'warn';         // aún en aprendizaje
+      else if (lb >= 0.35) cls = 'ok';       // aprobado
       else cls = 'bad';                      // pausado
 
       const lbPct  = (lb * 100).toFixed(0);
       const fillW  = Math.min(100, lb * 100).toFixed(0);
-      const label  = trades < 20 ? '📚 Aprendiendo' : (lb >= 0.55 ? '✅ Activo' : '⛔ Pausado');
+      const label  = trades < 30 ? '📚 Aprendiendo' : (lb >= 0.35 ? '✅ Activo' : '⛔ Pausado');
 
       return `<div class="wilson-pair ${cls}">
         <div class="wp-name">${par}</div>

@@ -3193,7 +3193,20 @@ def api_estado():
         "hora_venezuela":    hora_venezuela(),
         "ciclo":             ciclo,
         "timestamp":         datetime.now().isoformat(),
+        "wilson":            cargar_wilson(),
     })
+
+@app.route("/api/wilson_manual", methods=["POST"])
+def api_wilson_manual():
+    data = request.get_json(force=True) or {}
+    par  = data.get("par", "")
+    res  = data.get("resultado", "")
+    if not par or res not in ("W", "L"):
+        return jsonify({"ok": False, "error": "par y resultado requeridos"}), 400
+    wilson_actualizar(par, res == "W")
+    stats = cargar_wilson().get(par, {})
+    log.info(f"Wilson manual: {par} +{res} → {stats}")
+    return jsonify({"ok": True, "par": par, "resultado": res, "stats": stats})
 
 @app.route("/api/pausar", methods=["POST"])
 def api_pausar():
