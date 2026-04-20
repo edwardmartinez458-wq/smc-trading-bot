@@ -201,17 +201,16 @@ def guardar_wilson(stats):
         log.error(f"Wilson guardar: {e}")
 
 def wilson_permite(simbolo):
-    """Retorna True si Wilson permite operar el par."""
+    """Modo observador: siempre permite operar. Solo registra el WLB en log."""
     stats = cargar_wilson()
     s = stats.get(simbolo, {"wins": 0, "trades": 0})
     n = s["trades"]
-    if n < WILSON_MIN_N:
-        log.info(f"{simbolo} — Wilson: aprendizaje ({n}/{WILSON_MIN_N} trades)")
-        return True
-    wlb = _wilson_lb(s["wins"], n)
-    ok  = wlb >= WILSON_MIN_LB
-    log.info(f"{simbolo} — Wilson: {s['wins']}W/{n}T WLB={wlb:.3f} {'✅' if ok else '❌ BLOQUEADO'}")
-    return ok
+    if n >= WILSON_MIN_N:
+        wlb = _wilson_lb(s["wins"], n)
+        log.info(f"{simbolo} — Wilson observando: {s['wins']}W/{n}T WLB={wlb:.3f} (sin bloqueo)")
+    else:
+        log.info(f"{simbolo} — Wilson observando: {n}/{WILSON_MIN_N} trades acumulados")
+    return True  # nunca bloquea — modo aprendizaje
 
 def wilson_actualizar(simbolo, gano: bool):
     """Actualiza wins/trades del par tras cerrar un trade."""
@@ -2628,7 +2627,16 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     close_now  = float(df_1h["close"].iloc[-1])
     close_prev = float(df_1h["close"].iloc[-2])
 
-    log.info(f"{simbolo} — EMA21={ema21_v:.4f} EMA89={ema89_v:.4f} | RSI={rsi:.1f} ADX={adx:.1f} | Vol={vol:.0f}/avg={vol_avg:.0f} | Rng={rng:.4f}/avg={rng_avg:.4f}")
+    # Dirección basada en EMA 4H (no en tendencia daily)
+    if ema21_v > ema89_v:
+        direccion = "alcista"
+    elif ema21_v < ema89_v:
+        direccion = "bajista"
+    else:
+        log.info(f"{simbolo} — RECHAZADO: EMA21 == EMA89, sin tendencia clara")
+        return
+
+    log.info(f"{simbolo} — EMA21={ema21_v:.4f} EMA89={ema89_v:.4f} dir={direccion} | RSI={rsi:.1f} ADX={adx:.1f} | Vol={vol:.0f}/avg={vol_avg:.0f} | Rng={rng:.4f}/avg={rng_avg:.4f}")
 
     # Filtro BTC — no operar si BTC mueve > 3.5% en la última vela 1H
     try:
@@ -2656,10 +2664,7 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
         return
 
     # LONG
-    if t == "alcista":
-        if ema21_v <= ema89_v:
-            log.info(f"{simbolo} — RECHAZADO: EMA21 < EMA89 (sin tendencia alcista 4H)")
-            return
+    if direccion == "alcista":
         if not (35 <= rsi <= 75):
             log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango LONG (35-75)")
             return
@@ -2668,12 +2673,9 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
             return
 
     # SHORT
-    elif t == "bajista":
+    else:
         if simbolo in PARES_SOLO_LONG:
             log.info(f"{simbolo} — RECHAZADO: par en lista SOLO_LONG")
-            return
-        if ema21_v >= ema89_v:
-            log.info(f"{simbolo} — RECHAZADO: EMA21 > EMA89 (sin tendencia bajista 4H)")
             return
         if not (25 <= rsi <= 55):
             log.info(f"{simbolo} — RECHAZADO: RSI {rsi:.1f} fuera de rango SHORT (25-55)")
@@ -2686,9 +2688,9 @@ def _trade_ema_rsi(simbolo, t, pc, df_4h):
     if not wilson_permite(simbolo):
         return
 
-    log.info(f"{simbolo} ✅ Momentum v2 OK — ejecutando {'LONG' if t=='alcista' else 'SHORT'}")
+    log.info(f"{simbolo} ✅ Momentum v2 OK — ejecutando {'LONG' if direccion=='alcista' else 'SHORT'}")
     ia = {"entrar": True, "confianza": 70, "razon": "Momentum v2 — impulso propio del par"}
-    abrir(simbolo, t, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v)
+    abrir(simbolo, direccion, pc, ia, rsi=rsi, adx=adx, ema21=ema21_v, ema89=ema89_v)
 
 
 CICLOS_OBSERVACION = 2  # Ciclos de espera tras reinicio antes de entrar al mercado
@@ -2813,10 +2815,9 @@ def analizar(simbolo: str):
         log.info(f"{simbolo} — fuera de horario ({hora_venezuela()}h Venezuela)")
         return
 
-    df_d  = velas_binance(simbolo, 50)
-    df_4h = velas(simbolo, "240",  200)
-    if df_d.empty or df_4h.empty:
-        log.info(f"{simbolo} — sin datos de velas")
+    df_4h = velas(simbolo, "240", 200)
+    if df_4h.empty:
+        log.info(f"{simbolo} — sin datos de velas 4H")
         return
 
     pc = precio(simbolo)
@@ -2824,39 +2825,10 @@ def analizar(simbolo: str):
         log.info(f"{simbolo} — sin precio")
         return
 
-    t = tendencia(df_d, pc)
-    log.info(f"{simbolo} — tendencia Daily: {t} | precio: ${pc:.4f}")
-
-    # Calcular EMA4H para alertas manuales
-    ema21_4h = df_4h["close"].ewm(span=21, adjust=False).mean().iloc[-1] if len(df_4h) >= 30 else None
-    ema89_4h = df_4h["close"].ewm(span=89, adjust=False).mean().iloc[-1] if len(df_4h) >= 90 else None
-
-    def _alerta_manual(mensaje):
-        ahora = time.time()
-        if ahora - _ultima_alerta_manual.get(simbolo, 0) >= 4 * 3600:
-            _ultima_alerta_manual[simbolo] = ahora
-            tg(f"⚠️ SEÑAL MANUAL {simbolo}\n{mensaje}\nPrecio: ${pc:.4f}")
-
-    if t == "lateral":
-        if ema21_4h and ema89_4h:
-            if ema21_4h > ema89_4h * 1.005:
-                _alerta_manual("Daily lateral pero EMA4H alcista\nConsiderar LONG manual")
-            elif ema21_4h < ema89_4h * 0.995:
-                _alerta_manual("Daily lateral pero EMA4H bajista\nConsiderar SHORT manual")
-        log.info(f"{simbolo} — RECHAZADO: mercado lateral, sin operacion")
-        return
-
-    # Si SHORT, verificar que BTC no sea alcista (evita loop abrir/cerrar)
-    if t == "bajista":
-        t_btc = estado.get("tendencia_btc", "lateral")
-        if t_btc == "alcista":
-            if ema21_4h and ema89_4h and ema21_4h < ema89_4h:
-                _alerta_manual("Daily bajista + EMA4H bajista\nPero BTC alcista bloquea SHORT\nConsiderar SHORT manual")
-            log.info(f"{simbolo} — RECHAZADO: estructura bajista pero BTC es alcista, no abrir SHORT")
-            return
-
-    # Opera LONG en alcista y SHORT en bajista
-    _trade_ema_rsi(simbolo, t, pc, df_4h)
+    # Momentum v2: la dirección la decide _trade_ema_rsi via EMA21/89 4H
+    # El filtro daily MA20 fue eliminado — era incompatible con la estrategia actual
+    log.info(f"{simbolo} — precio: ${pc:.4f} | evaluando Momentum v2")
+    _trade_ema_rsi(simbolo, None, pc, df_4h)
 
 
 # ─── REPORTE ──────────────────────────────────────────────────────────────────
