@@ -1,0 +1,8 @@
+{
+  "POLUSDTM":  {"wins": 11, "trades": 20},
+  "XRPUSDTM":  {"wins": 11, "trades": 20},
+  "ATOMUSDTM": {"wins": 10, "trades": 20},
+  "DOTUSDTM":  {"wins": 10, "trades": 20},
+  "ICPUSDTM":  {"wins":  8, "trades": 20},
+  "SUIUSDTM":  {"wins":  8, "trades": 20}
+}
