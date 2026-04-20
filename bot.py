@@ -69,7 +69,7 @@ SL_DIARIO_PCT  = 0.03  # 3% diario
 
 # Wilson LB — filtro estadístico por par (backtest N=30 ganó)
 WILSON_MIN_N  = 30     # trades mínimos antes de activar el filtro
-WILSON_MIN_LB = 0.38   # límite inferior Wilson (95% confianza)
+WILSON_MIN_LB = 0.35   # límite inferior Wilson
 WILSON_Z      = 1.64
 _WILSON_PATH  = "wilson_stats.json"
 
