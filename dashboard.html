@@ -1273,6 +1273,7 @@
         body: JSON.stringify({ par, resultado })
       });
       const d = await r.json();
+      if (d.ok) {
         showNotif(`${icono} ${par} - ${d.wins}W/${d.trades - d.wins}L | LB ${(d.lb*100).toFixed(0)}%`,
                   resultado === 'W' ? 'var(--green)' : 'var(--red)');
         setTimeout(() => cargarEstadoCT(), 1000);
@@ -1280,8 +1281,6 @@
         showNotif(`Error: ${d.error}`, 'var(--red)');
       }
     } catch(e) { showNotif('Error conectando CT', 'var(--red)'); }
-  }
-
   // Controles CT
   async function pausarCT() {
     if (!CT_URL) { showNotif('CT_URL no configurada', 'var(--warn)'); return; }
