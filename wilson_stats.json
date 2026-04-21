@@ -1,8 +1,5 @@
 {
   "POLUSDTM":  {"wins": 0, "trades": 0},
-  "XRPUSDTM":  {"wins": 0, "trades": 0},
-  "ATOMUSDTM": {"wins": 0, "trades": 0},
-  "DOTUSDTM":  {"wins": 0, "trades": 0},
   "ICPUSDTM":  {"wins": 0, "trades": 0},
-  "SUIUSDTM":  {"wins": 0, "trades": 0}
+  "AVAXUSDTM": {"wins": 0, "trades": 0}
 }
