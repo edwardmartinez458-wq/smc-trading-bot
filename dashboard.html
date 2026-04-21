@@ -987,8 +987,7 @@
         else break;
       }
       const sw = document.getElementById(prefix + '-streak-wrap');
-        ? `<span class="streak-badge">${streak} racha</span>`
-        : '';
+      sw.innerHTML = streak >= 2 ? `<span class="streak-badge">${streak} racha</span>` : '';
 
       // Ultimas 5 operaciones con badge de direccion
       const last5 = hist.slice(-5).reverse();
