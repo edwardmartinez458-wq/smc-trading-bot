@@ -1,14 +1,14 @@
 """
 SMC Trading Bot — Smart Money Concepts
 Exchange: KuCoin Futuros
-Pares: 7 activos (alto volumen)
+Pares: 3 activos (cartera fuerte)
 Apalancamiento: x10 (configurable)
 Servidor: Railway 24/7
 + Monitor Trump Truth Social
 + Monitor Reserva Federal
 MEJORAS v2:
 - Riesgo 1-2% por operacion
-- Pares de bajo volumen removidos (ARB, OP, INJ)
+- Pares ajustados por backtest reciente (POL, ICP, AVAX)
 - Ciclo cada 5-15 min (aleatorio)
 - Filtro tendencia mayor BTC
 - Stop loss global 10% diario
@@ -33,15 +33,13 @@ TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 DEEPSEEK_API_KEY  = os.getenv("DEEPSEEK_API_KEY")
 COINGLASS_API_KEY  = os.getenv("COINGLASS_API_KEY", "")
+DEEPSEEK_ENABLED   = bool(DEEPSEEK_API_KEY)
 
-# Pares de ALTO volumen solamente (removidos ARB, OP, INJ por bajo volumen)
+# Pares de la cartera fuerte segun backtest reciente
 PARES = [
-    "POLUSDTM",    # WR 45.7% — backtest 9 meses Jul-Abr
-    "XRPUSDTM",    # WR 34.0% — backtest 9 meses Jul-Abr
-    "ATOMUSDTM",   # WR 35.4% — backtest 9 meses Jul-Abr
-    "ICPUSDTM",    # WR 39.4% — backtest 9 meses Jul-Abr
-    "SUIUSDTM",    # WR 36.9% — backtest 9 meses Jul-Abr
-    # DOT eliminado: WR 31.4% único par perdedor en backtest
+    "POLUSDTM",    # principal motor del sistema
+    "ICPUSDTM",    # aporta edge adicional
+    "AVAXUSDTM",   # tercer par mas robusto en cartera fuerte
 ]
 
 PARES_SOLO_LONG = []  # todos los pares operan bidireccional
@@ -61,15 +59,15 @@ COOLDOWN_TRAS_LOSS_MIN  = 180   # minutos de bloqueo global tras un trade perded
 
 # Grupo correlacionado alts L1: todos se mueven con BTC (ρ > 0.80 diario)
 CORRELATED_GROUPS = {
-    "alts_l1": {"POLUSDTM", "XRPUSDTM", "ATOMUSDTM", "DOTUSDTM", "ICPUSDTM", "SUIUSDTM"},
+    "alts_l1": {"POLUSDTM", "ICPUSDTM", "AVAXUSDTM"},
 }
 
 # Stop loss global diario: si el capital cae mas de 5% en el dia -> pausar
 SL_DIARIO_PCT  = 0.03  # 3% diario
 
-# Wilson LB — filtro estadístico por par (backtest N=30 ganó)
-WILSON_MIN_N  = 30     # trades mínimos antes de activar el filtro
-WILSON_MIN_LB = 0.35   # límite inferior Wilson
+# Wilson LB — filtro estadístico por par
+WILSON_MIN_N  = 60     # trades mínimos antes de activar el filtro
+WILSON_MIN_LB = 0.30   # límite inferior Wilson
 WILSON_Z      = 1.64
 _WILSON_PATH  = "wilson_stats.json"
 
@@ -99,7 +97,7 @@ fh = TimedRotatingFileHandler("logs/bot.log", when="midnight", backupCount=7)
 fh.setFormatter(fmt)
 log.addHandler(fh)
 
-ai = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+ai = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com") if DEEPSEEK_ENABLED else None
 
 estado = {
     "posiciones":        [],
@@ -200,18 +198,6 @@ def guardar_wilson(stats):
     except Exception as e:
         log.error(f"Wilson guardar: {e}")
 
-def wilson_permite(simbolo):
-    """Modo observador: siempre permite operar. Solo registra el WLB en log."""
-    stats = cargar_wilson()
-    s = stats.get(simbolo, {"wins": 0, "trades": 0})
-    n = s["trades"]
-    if n >= WILSON_MIN_N:
-        wlb = _wilson_lb(s["wins"], n)
-        log.info(f"{simbolo} — Wilson observando: {s['wins']}W/{n}T WLB={wlb:.3f} (sin bloqueo)")
-    else:
-        log.info(f"{simbolo} — Wilson observando: {n}/{WILSON_MIN_N} trades acumulados")
-    return True  # nunca bloquea — modo aprendizaje
-
 def wilson_actualizar(simbolo, gano: bool):
     """Actualiza wins/trades del par tras cerrar un trade."""
     stats = cargar_wilson()
@@ -222,6 +208,33 @@ def wilson_actualizar(simbolo, gano: bool):
     stats[simbolo] = s
     guardar_wilson(stats)
     log.info(f"{simbolo} — Wilson actualizado: {s['wins']}W/{s['trades']}T")
+
+def wilson_permite(simbolo):
+    """Aplica el filtro Wilson LB despues del modo aprendizaje."""
+    stats = cargar_wilson()
+    s = stats.get(simbolo, {"wins": 0, "trades": 0})
+    n = s["trades"]
+    if n < WILSON_MIN_N:
+        log.info(f"{simbolo} - Wilson aprendizaje: {n}/{WILSON_MIN_N} trades acumulados")
+        return True
+
+    wlb = _wilson_lb(s["wins"], n)
+    if wlb < WILSON_MIN_LB:
+        log.info(f"{simbolo} - RECHAZADO: Wilson WLB={wlb:.3f} < {WILSON_MIN_LB:.2f} ({s['wins']}W/{n}T)")
+        return False
+
+    log.info(f"{simbolo} - Wilson OK: WLB={wlb:.3f} >= {WILSON_MIN_LB:.2f} ({s['wins']}W/{n}T)")
+    return True
+
+def deepseek_chat(messages, max_tokens):
+    """Wrapper para que DeepSeek sea opcional y no detenga el bot."""
+    if not ai:
+        raise RuntimeError("DeepSeek no configurado")
+    return ai.chat.completions.create(
+        model="deepseek-chat",
+        max_tokens=max_tokens,
+        messages=messages,
+    )
 
 # Posiciones cerradas recientemente por el bot (evita re-agregar en sync por 5 min)
 _cerradas_reciente = {}  # {simbolo: timestamp}
@@ -471,8 +484,7 @@ def es_relevante_para_crypto(texto: str) -> bool:
 
 def analizar_trump_ia(texto: str) -> dict:
     try:
-        r = ai.chat.completions.create(
-            model="deepseek-chat",
+        r = deepseek_chat(
             max_tokens=200,
             messages=[{"role": "user", "content": f"""Eres un analista de mercados crypto. Trump publico esto en Truth Social:
 
@@ -562,8 +574,7 @@ def monitor_fed():
                 continue
             # Analizar con IA
             try:
-                r = ai.chat.completions.create(
-                    model="deepseek-chat",
+                r = deepseek_chat(
                     max_tokens=100,
                     messages=[{"role": "user", "content":
                         f"""Eres un analista macro. Determina el impacto de esta noticia de la Fed en crypto/Bitcoin.
@@ -2049,8 +2060,7 @@ def filtro_ia(simbolo, t, pc, ob, toques) -> dict:
 
     for intento in range(3):
         try:
-            r = ai.chat.completions.create(
-                model="deepseek-chat",
+            r = deepseek_chat(
                 max_tokens=300,
                 messages=[{"role": "user", "content": f"""Eres el filtro de riesgo de un bot SMC. Decide si entrar o no.
 
@@ -2912,15 +2922,18 @@ def verificar_inicio():
             log.info(f"capital_inicio_dia preservado desde persistencia: ${estado['capital_inicio_dia']:.2f} (dia {hoy_iso}) — daily stop sobrevive reinicio")
         guardar_estado_persistente()
 
-    log.info("Verificando DeepSeek API...")
-    try:
-        ai.chat.completions.create(
-            model="deepseek-chat", max_tokens=5,
-            messages=[{"role": "user", "content": "ok"}]
-        )
-        log.info("DeepSeek OK")
-    except Exception as e:
-        errores.append(f"DeepSeek API: {e}")
+    if DEEPSEEK_ENABLED:
+        log.info("Verificando DeepSeek API...")
+        try:
+            deepseek_chat(
+                max_tokens=5,
+                messages=[{"role": "user", "content": "ok"}]
+            )
+            log.info("DeepSeek OK")
+        except Exception as e:
+            log.warning(f"DeepSeek no disponible â€” continuando sin IA: {e}")
+    else:
+        log.warning("DeepSeek no configurado â€” bot continua sin IA")
 
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         log.info("Verificando Telegram...")
@@ -2966,7 +2979,7 @@ def verificar_inicio():
                             pos_kucoin.append(pd_)
                 except Exception:
                     pass
-        if r.get("code") == "200000" or True:
+        if r.get("code") == "200000":
             for pk in pos_kucoin:
                 simbolo = pk.get("symbol", "")
                 qty     = float(pk.get("currentQty", 0))
@@ -3070,7 +3083,7 @@ def verificar_inicio():
        f"Max posiciones globales: {MAX_POSICIONES_GLOBALES}\n"
        f"Max exposicion total: {MAX_EXPOSICION_TOTAL*100:.0f}% del equity\n"
        f"Cooldown tras loss: {COOLDOWN_TRAS_LOSS_MIN} min\n"
-       f"Wilson: observador (acumulando experiencia)\n"
+       f"Wilson: activo desde {WILSON_MIN_N} trades por par (WLB >= {WILSON_MIN_LB:.2f})\n"
        f"\nCiclo: 5-15 min | 24/7\n\n"
        f"{', '.join(pares_ok)}\n\nActivo en Railway")
 
