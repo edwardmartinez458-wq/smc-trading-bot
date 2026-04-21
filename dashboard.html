@@ -605,7 +605,7 @@
             BOT CT - CONTRA-TENDENCIA
             <span class="bot-dir-badge">LONG / SHORT</span>
           </div>
-          <div class="bot-exchange">BingX Futures | INJ | ETH | ARB | ICP | ADA | XRP</div>
+          <div class="bot-exchange">BingX Futures | AAVE | POL | ICP | ADA | INJ | DOT</div>
         </div>
         <div class="controls">
           <button class="btn btn-pause"  onclick="pausarCT()">Pausar</button>
@@ -629,7 +629,7 @@
         <div class="stat blue-top">
           <div class="stat-label">Posiciones</div>
           <div class="stat-val blue" id="ct-num-pos">-</div>
-          <div class="stat-sub">Abiertas (max 3)</div>
+          <div class="stat-sub">Abiertas (max 4)</div>
         </div>
         <!-- Ganadas -->
         <div class="stat ct-top">
@@ -1185,6 +1185,8 @@
       document.getElementById('ct-badge').textContent = 'ERROR';
       document.getElementById('ct-pill').className = 'status-pill off';
       document.getElementById('ct-dot').className  = 'dot off';
+      document.getElementById('ct-log-list').innerHTML = '<div class="empty">CT sin conexion con la API.</div>';
+      document.getElementById('ct-wilson-grid').innerHTML = '<div class="empty">No se pudo cargar Wilson CT.</div>';
     }
   }
 
@@ -1320,3 +1322,4 @@
 </script>
 </body>
 </html>
+
