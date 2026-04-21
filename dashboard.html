@@ -583,6 +583,7 @@
       </div>
 
       <div class="card">
+        <div class="card-header kc-header">
           <span class="card-title">Ultimas Operaciones</span>
           <span class="card-badge" id="l-hist-count">0</span>
         </div>
@@ -834,10 +835,9 @@
   function updateMeta() {
     const total = (capitalNow.l || 0) + (capitalNow.ct || 0);
     document.getElementById('total-capital').textContent = total > 0 ? '$' + fmt(total) : '$-';
-      const pct = Math.min(100, (total / META_GOAL) * 100);
-      document.getElementById('meta-fill').style.width = pct.toFixed(1) + '%';
-      document.getElementById('meta-pct').textContent  = fmt(pct, 0) + '%  $' + fmt(total, 0) + ' / $' + META_GOAL;
-    }
+    const pct = Math.min(100, (total / META_GOAL) * 100);
+    document.getElementById('meta-fill').style.width = pct.toFixed(1) + '%';
+    document.getElementById('meta-pct').textContent = fmt(pct, 0) + '%  $' + fmt(total, 0) + ' / $' + META_GOAL;
   }
 
   // Posiciones abiertas
@@ -1283,6 +1283,7 @@
         showNotif(`Error: ${d.error}`, 'var(--red)');
       }
     } catch(e) { showNotif('Error conectando CT', 'var(--red)'); }
+  }
   // Controles CT
   async function pausarCT() {
     if (!CT_URL) { showNotif('CT_URL no configurada', 'var(--warn)'); return; }
@@ -1322,4 +1323,5 @@
 </script>
 </body>
 </html>
+
 
